@@ -1,4 +1,93 @@
-/* 預設亮色主題 */
+.dark-theme .recommended-questions {
+  background: rgba(41, 41, 41, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.recommended-questions:hover {
+  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.2);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.recommended-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.recommended-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color);
+  text-align: left;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  margin: 0;
+}
+
+.recommended-close-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--color);
+  opacity: 0.6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: opacity 0.2s ease;
+  min-width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.recommended-close-btn:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.dark-theme .recommended-close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.recommended-question-btn {
+  display: block;
+  width: 100%;
+  background: rgba(235, 235, 235, 0.8);
+  border: 1px solid rgba(196, 183, 230, 0.4);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  color: var(--color);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.dark-theme .recommended-question-btn {
+  background: rgba(59, 59, 59, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.recommended-question-btn:hover {
+  background: rgba(226, 226, 226, 0.95);
+  border-color: var(--loginbutton);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(89, 91, 212, 0.2);
+}
+
+.dark-theme .recommended-question-btn:hover {
+  background: rgba(59, 59, 59, 0.95);
+  border-color: var(--loginbutton);
+}
+
+.recommended-question-btn:last-child {
+  margin-bottom: 0;
+}/* CSS 變數定義 */
 :root {
   --background-color: #EBEBEB;
   --navbackground: #F9F7F3;
@@ -16,6 +105,8 @@
   --error-text: #c53030;
   --success-color: #38a169;
   --warning-color: #ed8936;
+  /* 導覽列寬度變數 - 由JavaScript動態設定 */
+  --sidebar-width: 230px;
 }
 
 /* 暗模式 */
@@ -36,6 +127,7 @@
   --error-text: #fc8181;
   --success-color: #68d391;
   --warning-color: #fbb040;
+  --sidebar-width: 230px;
 }
 
 /* 基礎樣式 */
@@ -118,24 +210,6 @@ button {
   color: var(--color);
 }
 
-/* 推薦問題區域 - 簡化版本 */
-.recommended-questions {
-  position: absolute;
-  bottom: 90px;
-  right: 20px;
-  left: 20px;
-  background: rgba(249, 247, 243, 0.95);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-radius: 12px;
-  padding: 12px 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(196, 183, 230, 0.3);
-  z-index: 4;
-  max-width: calc(100% - 40px);
-  transition: all 0.3s ease;
-  animation: slideUpFadeIn 0.4s ease-out;
-}
 
 .dark-theme .recommended-questions {
   background: rgba(41, 41, 41, 0.95);
@@ -147,13 +221,48 @@ button {
   transform: translateY(-2px);
 }
 
+
+.recommended-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .recommended-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--color);
-  margin-bottom: 8px;
-  text-align: center;
+  text-align: left;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  margin: 0;
+}
+
+.recommended-close-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--color);
+  opacity: 0.6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: opacity 0.2s ease;
+  min-width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.recommended-close-btn:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.dark-theme .recommended-close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .recommended-question-btn {
@@ -194,6 +303,32 @@ button {
   margin-bottom: 0;
 }
 
+/* 推薦問題顯示按鈕 */
+.recommended-show-btn {
+  position: fixed;
+  bottom: 108px;
+  right: 20px;
+  z-index: 3;
+  background: rgba(89, 91, 212, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recommended-show-btn:hover {
+  background: rgba(89, 91, 212, 1);
+  transform: scale(1.1);
+}
+
 @keyframes slideUpFadeIn {
   from {
     opacity: 0;
@@ -204,6 +339,7 @@ button {
     transform: translateY(0);
   }
 }
+
 
 /* 聊天容器樣式 */
 .chat-container {
@@ -373,6 +509,10 @@ button {
   animation: thinkingPulse 2s ease-in-out infinite;
 }
 
+.ai-thinking .loader {
+  margin-left: 0;
+}
+
 @keyframes thinkingPulse {
   0%, 100% {
     opacity: 0.8;
@@ -417,21 +557,7 @@ button {
   margin-right: 12px;
 }
 
-/* 輸入容器樣式 */
-.input-container {
-  position: fixed;
-  bottom: 30px;
-  width: 100%;
-  max-width: 75%;
-  display: flex;
-  align-items: flex-end;
-  padding: 12px 16px;
-  background-color: var(--navbackground);
-  z-index: 999;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-  border-radius: 20px;
-  gap: 10px;
-}
+
 
 .classtable,
 .send-button {
@@ -831,7 +957,7 @@ textarea:focus {
 }
 
 /* 桌面版導航欄樣式 */
-@media screen and (min-width: 768px) {
+@media screen and (min-width: 769px) {
   .out-icon {
     margin-bottom: 25px;
     margin-left: -5px;
@@ -1097,9 +1223,435 @@ textarea:focus {
   .response-text {
     padding-right: 20%;
   }
+
+  /* 桌面版輸入容器確保正確定位 */
+  .input-container {
+    position: fixed;
+    bottom: 30px;
+    left: var(--nav-width)+20px; /* 與 sidebar 對齊 */
+    width: calc(100vw - var(--nav-width) - 40px); /* 自動補右邊 10px 空隙 */
+    max-width: unset;
+    display: flex;
+    align-items: flex-end;
+    padding: 12px 16px;
+    background-color: var(--navbackground);
+    z-index: 999;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    border-radius: 20px;
+    gap: 10px;
+  }
+  
+
+
+  /* 桌面版推薦問題區域確保正確定位 */
+  .recommended-questions {
+    position: fixed;
+    bottom: 108px;
+    left: var(--nav-width)+20px;
+    width: calc(100vw - var(--nav-width) - 60px); /* 貼齊右邊邊距 */
+    max-width: unset;
+    background: rgba(249, 247, 243, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 12px 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(196, 183, 230, 0.3);
+    z-index: 4;
+    transition: all 0.3s ease;
+  }
+  
 }
 
 /* 手機版樣式 */
+@media screen and (max-width: 768px) {
+/* 基礎樣式 */
+.out-icon {
+  margin-bottom: 25px;
+  margin-left: -5px; /* 負值向左移動 */
+}
+
+.collapsed {
+  width: 80px;
+  /* 縮小時的寬度 */
+}
+
+.collapsedph {
+  width: 0px;
+  background-color: var(--background-color);
+  /* 縮小時的寬度 */
+}
+
+.header-container {
+  display: flex;
+  align-items: center;
+  /* 垂直居中對齊 */
+  justify-content: space-between;
+  /* 兩端對齊 */
+  width: 215px;
+}
+
+.gradAIde {
+  font-size: 28px;
+  color: var(--color);
+}
+
+.icon-image {
+  width: 32px;
+  /* 設置圖片的寬度 */
+  height: 32px;
+  /* 設置圖片的高度 */
+}
+
+.three-image {
+  width: 30px;
+  /* 設置圖片的寬度 */
+  padding-right: 10px;
+}
+
+.nav-icon {
+  margin-right: 10px;
+  width: 24px;
+  /* 設置圖片的寬度 */
+  height: 24px;
+  /* 設置圖片的高度 */
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  /* 添加動畫效果 */
+}
+
+.edit-icon {
+  width: 18px;
+  /* 設置圖片的寬度 */
+  height: 18px;
+  /* 設置圖片的高度 */
+  margin-right: 0.5em;
+}
+
+.icon-imageithin {
+  width: 32px;
+  /* 設置圖標寬度 */
+  height: 32px;
+  /* 設置圖標高度 */
+  margin-right: 10px;
+  /* 圖標與文字之間的間距 */
+  margin-bottom: 15px;
+  background-color: transparent;
+  /* 清除背景顏色 */
+  border: none;
+  /* 移除邊框 */
+}
+
+.nav-icon-thin {
+  margin-right: 10px;
+  margin-bottom: 25px;
+  width: 24px;
+  /* 設置圖片的寬度 */
+  height: 24px;
+  /* 設置圖片的高度 */
+  display: block;
+}
+
+ul {
+  margin-top: 20px;
+}
+
+li {
+  list-style: none;
+  display: flex;
+  /* 使用 flex 來水平排列子元素 */
+  align-items: center;
+  /* 垂直居中對齊 */
+  font-size: 16px;
+  white-space: nowrap;
+  /* 防止文本換行 */
+  font-weight: bold;
+}
+
+.lil {
+  margin-bottom: 20px;
+  color: var(--color);
+}
+
+.arrow {
+  background-color: #ebebeb00;
+  border: none;
+}
+
+.editarrow {
+  background-color: transparent;
+  border: none;
+  position: relative;
+  /* 確保按鈕本身是相對定位的 */
+}
+
+.editdropdown-menu {
+  margin: 0;
+  padding: 10px 20px;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  position: absolute;
+  /* 使用絕對定位 */
+  top: 100%;
+  /* 放置在父元素的下方 */
+  margin-left: 70px;
+  /* 根據需要調整 */
+  width: 120px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1000;
+  /* 確保下拉框浮在其他元素之上 */
+}
+
+.editdropdown-menu.show {
+  opacity: 1;
+}
+
+.editfont {
+  font-size: 14px;
+  margin-bottom: 10px;
+  margin-top: 10px;
+  padding-left: 10px;
+  /* 調整內邊距 */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  position: relative;
+  /* 設置為相對定位，讓子元素可以絕對定位 */
+}
+
+.editdrop {
+  position: relative;
+  top: 100%;
+}
+
+.dropdown {
+  position: relative;
+  /* 父元素 */
+  width: 100%;
+  display: block;
+  align-items: center;
+  /* 垂直居中對齊 */
+  justify-content: space-between;
+  /* 兩端對齊 */
+}
+
+.dropdown-font {
+  font-size: 14px;
+  margin-bottom: 10px;
+  margin-top: 10px;
+  padding-left: 34px;
+  display: flex;
+  align-items: center;
+  /* 垂直居中對齊 */
+  justify-content: space-between;
+  /* 讓內容在兩端對齊 */
+  width: 100%;
+  color: var(--color);
+}
+
+.dropdown-menu {
+  margin: 0;
+  padding: 0;
+  position: relative;
+  top: 100%;
+  width: 100%;
+  max-height: 110px;
+  /* 設置最大高度，根據需求調整 */
+  overflow-y: auto;
+  /* 啟用垂直滾動條 */
+  opacity: 0;
+  max-height: 0;
+  transition: opacity 0.3s ease, max-height 0.3s ease;
+}
+
+.dropdown-menu.show {
+  opacity: 1;
+  max-height: 110px;
+  max-width: 200px;
+  color: var(--color);
+  /* 與上方一致 */
+}
+
+.dropdown-menu::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+  /*右側捲軸寬度*/
+}
+
+/* 滑桿顏色 */
+.dropdown-menu::-webkit-scrollbar-thumb {
+  background: #595BD4;
+}
+
+button {
+  cursor: pointer;
+  /* 指針樣式 */
+}
+
+.sticky-bottom {
+  position: absolute;
+  bottom: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 180px;
+  padding: 5px 15px;
+  background-color: var(--navbackground);
+  cursor: pointer;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  font-size: 16px;
+  font-weight: bolder;
+  white-space: nowrap;
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 20px;
+  color: var(--loginbutton);
+}
+
+.sticky-bottom:hover {
+  background-color: var(--loginbg);
+  /* 懸停時的背景顏色 */
+  color: var(--loginbuttonhover);
+  /* 懸停時的文字顏色 */
+  border-color: var(--loginbuttonhover);
+  /* 懸停時的邊框顏色 */
+}
+
+.logout-image {
+  width: 24px;
+  height: 24px;
+}
+
+/* 訊息相關樣式 */
+.user-message-container {
+  display: flex;
+  justify-content: flex-end;
+  /* 將訊息容器靠右對齊 */
+  align-items: flex-end;
+  /* 垂直方向對齊 */
+  border-radius: 12px;
+  /* 圓角 */
+  padding: 10px 15px;
+  /* 內邊距 */
+  margin-bottom: 10px;
+  /* 每個訊息之間的間距 */
+}
+
+.user-message {
+  background-color: #ffffff78;
+  color: var(--color);
+  padding: 10px;
+  border-radius: 18px;
+  max-width: 65%;
+  margin: 0;
+  float: right;
+  margin-top: 10px;
+}
+
+.message-text {
+  font-size: 16px;
+  color: var(--message-text);
+  margin: 0;
+}
+
+.ai-response {
+  display: flex;
+  align-items: flex-start;
+  padding: 15px;
+  float: left;
+  width: 100%;
+  padding-right: 5%;
+}
+
+.response-text {
+  font-size: 16px;
+  color: var(--message-text);
+  padding-right: 5%;
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+
+.editicon {
+  width: 24px;
+  height: 24px;
+  margin-left: 5px;
+}
+
+.logoicon {
+  width: 28px;
+  height: 28px;
+  margin-left: 5px;
+  margin-right: 12px;
+}
+
+.chat-container {
+  width: 100%;
+  margin: 20px auto;
+  border-radius: 10px;
+  height: calc(100vh - 200px); /* 根據需要調整高度 */
+  overflow-y: auto; /* 啟用垂直滾動 */
+}
+
+.input-container {
+  display: flex;
+  align-items: flex-end; /* 讓輸入框底部固定 */
+  gap: 10px;
+  padding: 10px;
+  border-radius: 20px;
+  width: 92%;
+  margin: auto;
+  position: fixed;
+  bottom: 20px; /* 固定在底部 */
+  background-color: var(--navbackground);
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.classtable,
+.send-button {
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.sendbox {
+  flex: 1;
+  height: 40px; /* 預設為一行高度 */
+  min-height: 40px; /* 最小高度保持一行 */
+  max-height: 150px; /* 設定最大高度，避免輸入過多影響畫面 */
+  overflow-y: auto; /* 允許滾動 */
+  border-radius: 15px;
+  padding: 7px 15px;
+  font-size: 16px;
+  color: var(--color);
+  background-color: var(--sendbox);
+  border: none;
+  outline: none;
+  resize: none; /* 禁止手動調整 */
+}
+
+.sendbox::-webkit-scrollbar {
+  width: 3px;
+  /*右側捲軸寬度*/
+}
+
+/* 滑桿顏色 */
+.sendbox::-webkit-scrollbar-thumb {
+  background: #595BD4;
+}
+
+/* 響應式設計 - 手機版 */
 @media screen and (max-width: 768px) {
   .overlay {
     position: fixed;
@@ -1137,54 +1689,187 @@ textarea:focus {
     transform: translateX(0);
   }
 
+  /* 手機版聊天容器調整 */
+  .chat-container {
+    width: 100%;
+    margin: 10px auto;
+    padding: 0 15px;
+    height: calc(100vh - 140px);
+    overflow-y: auto;
+    padding-bottom: 80px;
+  }
+
+  /* 手機版訊息樣式 */
+  .user-message-container {
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+
   .user-message {
-    max-width: 65%;
+    max-width: 85%;
+    padding: 12px 16px;
+    font-size: 15px;
+    line-height: 1.4;
   }
 
   .ai-response {
-    padding-right: 5%;
+    padding: 10px;
+    padding-right: 10px;
+    width: 100%;
   }
 
   .response-text {
-    padding-right: 5%;
+    font-size: 15px;
+    padding-right: 0;
+    line-height: 1.6;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+    max-width: 100%;
   }
 
+  /* 手機版輸入容器 */
   .input-container {
     display: flex;
     align-items: flex-end;
-    gap: 10px;
-    padding: 10px;
+    gap: 8px;
+    padding: 12px;
     border-radius: 20px;
-    width: 92%;
-    margin: auto;
+    width: calc(100% - 40px);
+    max-width: 500px;
+    margin: 0 auto;
     position: fixed;
     bottom: 20px;
-    background-color: white;
-    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--navbackground);
+    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 100;
   }
 
   .sendbox {
+    flex: 1;
     height: 40px;
     min-height: 40px;
-    max-height: 150px;
+    max-height: 120px;
+    padding: 10px 12px;
+    font-size: 15px;
+    border-radius: 12px;
   }
 
+  .classtable,
+  .send-button {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+  }
+
+  /* 手機版推薦問題區域 */
   .recommended-questions {
     position: fixed;
-    bottom: 90px;
-    right: 10px;
-    left: 10px;
-    max-width: none;
-    padding: 10px 14px;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: calc(100% - 24px);
+    max-width: 500px;
+    padding: 12px;
+    background-color: rgba(249, 247, 243, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    z-index: 50;
+    border: 1px solid rgba(196, 183, 230, 0.3);
+  }
+
+  .dark-theme .recommended-questions {
+    background-color: rgba(41, 41, 41, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .recommended-header {
+    margin-bottom: 8px;
+  }
+
+  .recommended-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--color);
+  }
+
+  .recommended-close-btn {
+    min-width: 20px;
+    height: 20px;
+    font-size: 14px;
+    padding: 1px 4px;
   }
 
   .recommended-question-btn {
     font-size: 13px;
-    padding: 12px;
+    padding: 10px 12px;
+    margin: 4px 0;
+    width: 100%;
+    text-align: left;
+    background-color: rgba(235, 235, 235, 0.8);
+    border: 1px solid rgba(196, 183, 230, 0.4);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
   }
-  
-  .recommended-title {
-    font-size: 13px;
+
+  .dark-theme .recommended-question-btn {
+    background-color: rgba(59, 59, 59, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .recommended-question-btn:hover {
+    background-color: rgba(226, 226, 226, 0.95);
+    border-color: var(--loginbutton);
+  }
+
+  .dark-theme .recommended-question-btn:hover {
+    background-color: rgba(59, 59, 59, 0.95);
+    border-color: var(--loginbutton);
+  }
+
+  /* 手機版推薦問題顯示按鈕 */
+  .recommended-show-btn {
+    position: fixed;
+    bottom: 108px;
+    right: 12px;
+    z-index: 3;
+  }
+
+  /* 手機版圖片預覽調整 */
+  .image-preview {
+    position: fixed;
+    bottom: 90px;
+    left: 20px;
+    max-width: 100px;
+    z-index: 60;
+  }
+
+  /* 手機版安全區域適配 */
+  @supports (bottom: env(safe-area-inset-bottom)) {
+    .input-container {
+      bottom: calc(20px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    
+    .recommended-questions {
+      bottom: calc(90px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .recommended-show-btn {
+      bottom: calc(90px + env(safe-area-inset-bottom));
+    }
+    
+    .chat-container {
+      padding-bottom: calc(80px + env(safe-area-inset-bottom));
+    }
   }
 
   .sticky-bottom {
@@ -1192,8 +1877,8 @@ textarea:focus {
     bottom: 15px;
     left: 50%;
     transform: translateX(-50%);
-    width: 180px;
-    padding: 5px 15px;
+    width: 160px;
+    padding: 8px 16px;
     background-color: var(--navbackground);
     cursor: pointer;
     text-align: center;
@@ -1201,12 +1886,11 @@ textarea:focus {
     align-items: center;
     justify-content: center;
     margin-bottom: 20px;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: bolder;
     white-space: nowrap;
     border: 0.5px solid var(--border);
     border-radius: 10px;
-    padding: 10px 20px;
     color: var(--loginbutton);
   }
 
@@ -1217,19 +1901,21 @@ textarea:focus {
   }
 
   .logout-image {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
   }
 
-  /* 🔹 手機版錯誤樣式調整 */
+  /* 手機版錯誤樣式調整 */
   .message-error {
-    margin: 2px 0;
-    padding: 6px;
+    margin: 4px 0;
+    padding: 8px;
   }
 
   .error-message {
     font-size: 13px;
     gap: 6px;
+    display: flex;
+    align-items: center;
   }
 
   .streaming-cursor {
@@ -1237,12 +1923,47 @@ textarea:focus {
   }
 
   .ai-thinking {
-    padding: 6px 0;
+    padding: 8px 0;
   }
 
   .loader__dot {
     width: 6px;
     height: 6px;
-    margin: 0 1px;
+    margin: 0 2px;
   }
+
+  .loader__text {
+    font-size: 13px;
+    margin-right: 6px;
+  }
+
+  .ai-thinking {
+    padding: 6px 0;
+  }
+
+  /* 手機版 Logo 圖標調整 */
+  .logoicon {
+    width: 24px;
+    height: 24px;
+    margin-left: 2px;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+
+  /* 手機版文字選取和複製優化 */
+  .response-text {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  /* 手機版滾動條優化 */
+  .chat-container::-webkit-scrollbar {
+    width: 2px;
+  }
+
+  .chat-container::-webkit-scrollbar-thumb {
+    background: #595BD4;
+    border-radius: 2px;
+  }
+}
 }
