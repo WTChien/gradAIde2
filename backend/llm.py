@@ -1,6 +1,7 @@
 import os
 import asyncio
 import concurrent.futures
+from opencc import OpenCC
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM, OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
@@ -17,8 +18,15 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from langchain_core.messages import HumanMessage
 import json
 
-# 🔹 導入課程搜尋 API
-from course_search import course_search_api, format_courses_for_agent
+# 🔹 導入課程搜尋 API (包含課程大綱網址)
+from course_search import course_search_api, course_name_search_api, teacher_course_search_api, format_courses_for_agent
+
+# 🔹 導入課程評價爬蟲工具 - 異步版本
+from extract_reviews import (
+    smart_recommend_courses, 
+    search_by_course_name, 
+    search_by_teacher_name
+)
 
 if not firebase_admin._apps:
     cred = credentials.Certificate("/home/a411401516/gradAIde_shared/local/backend/gradaide5-firebase-adminsdk-fbsvc-1f64c30917.json")
@@ -29,32 +37,38 @@ load_dotenv()
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["USER_AGENT"] = os.getenv("USER_AGENT")
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-os.environ["MISTRAL_API_KEY"] = os.getenv("MISTRAL_API_KEY")
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/a411401516/gradAIde_shared/local/backend/gradaide5-firebase-adminsdk-fbsvc-1f64c30917.json"
 
 PROJECT_ID = os.getenv("PROJECT_ID")
 
-# **載入 LLM 模型**
-model = OllamaLLM(model="llama3.3:latest")
-agent_model = ChatOpenAI(model="gpt-3.5-turbo-1106")
-ollama_model_client = OllamaChatCompletionClient(model="llama3.3:latest")
-
 retriever_tools = []  # 全域 retriever 工具集合
+
+# 🔹 FAQ配置 - 修改為使用MMR檢索，返回2筆資料
+FAQ_CONFIG = {
+    "RELEVANCE_THRESHOLD": 0.8,  # 相關性閾值
+    "MAX_RESULTS": 2,            # 最大檢索結果數改為2
+    "AUTO_SEARCH": True,         # 是否每次都自動搜尋
+    "LOG_SCORES": True,          # 是否記錄相關性分數
+    "USE_MMR": True              # 使用MMR檢索
+}
 
 # **🔹 課程搜尋工具（使用爬蟲）**
 def course_search(query: str) -> str:
     """
-    課程搜尋工具 - 使用自然語言查詢開課資訊
-    這個工具會解析自然語言查詢，並爬取輔仁大學課程查詢系統
+    課程搜尋工具 - 使用自然語言查詢開課資訊（依系所、時間、星期等條件）
+    這個工具會解析自然語言查詢，並爬取智慧大學課程查詢系統
+    適用於有明確系所、時間或星期條件的查詢
+    查詢結果會包含課程大綱查詢提醒
+    🔹 修改：確保返回5門課程名稱不重複的課程
     
     Args:
-        query (str): 自然語言查詢字串
+        query (str): 自然語言查詢字串，例如「星期一早上的人文通識」、「資管系的課程」
         
     Returns:
-        str: 格式化的課程查詢結果
+        str: 格式化的課程查詢結果，含課程大綱查詢提醒
     """
     try:
-        # 使用 API 化的課程搜尋函數
+        # 使用 API 化的課程搜尋函數（已包含大綱查詢提醒）
         search_result = course_search_api(query)
         
         # 將結果格式化為適合 Agent 閱讀的格式
@@ -64,13 +78,407 @@ def course_search(query: str) -> str:
         
     except Exception as e:
         return f"❌ 課程搜尋發生錯誤：{str(e)}"
+
+# **🔹 課程名稱關鍵字搜尋工具**
+def course_name_search(course_name_keyword: str) -> str:
+    """
+    課程名稱關鍵字搜尋工具 - 根據課程名稱關鍵字查詢課程
+    適用於想要找特定名稱或包含特定關鍵字的課程
+    查詢結果會包含課程大綱查詢提醒
+    🔹 修改：確保返回5門課程名稱不重複的課程
     
-# **🔹 載入向量資料庫**
+    Args:
+        course_name_keyword (str): 課程名稱關鍵字，例如「倫理學」、「程式設計」、「資料庫」
+        
+    Returns:
+        str: 格式化的課程查詢結果，含課程大綱查詢提醒
+    """
+    try:
+        # 使用 API 化的課程名稱搜尋函數（已包含大綱查詢提醒）
+        search_result = course_name_search_api(course_name_keyword)
+        
+        # 將結果格式化為適合 Agent 閱讀的格式
+        formatted_result = format_courses_for_agent(search_result)
+        
+        return formatted_result
+        
+    except Exception as e:
+        return f"❌ 課程名稱搜尋發生錯誤：{str(e)}" 
+
+# **🔹 新增：教師課程搜尋工具**
+def teacher_course_search(teacher_name: str) -> str:
+    """
+    教師課程搜尋工具 - 根據教師姓名查詢該教師開設的課程
+    這個工具會在智慧大學課程查詢系統中搜尋指定教師開設的所有課程
+    適用於想了解特定教師開課情況的查詢
+    查詢結果會包含課程大綱查詢提醒
+    🔹 確保返回5門課程名稱不重複的課程
+    
+    Args:
+        teacher_name (str): 教師姓名，例如「謝錦偉」、「陳建良」
+        
+    Returns:
+        str: 格式化的教師課程查詢結果，含課程大綱查詢提醒
+    """
+    try:
+        # 使用新增的教師課程搜尋函數
+        search_result = teacher_course_search_api(teacher_name)
+        
+        # 將結果格式化為適合 Agent 閱讀的格式
+        formatted_result = format_courses_for_agent(search_result)
+        
+        return formatted_result
+        
+    except Exception as e:
+        return f"❌ 教師課程搜尋發生錯誤：{str(e)}"
+
+# **🔹 異步課程評價工具（內部使用）**
+async def smart_course_review_recommend_async(query: str) -> str:
+    """
+    智能課程評價推薦工具 - 異步版本（內部使用）
+    """
+    try:
+        print(f"🧠 開始智能課程評價推薦，查詢：{query}")
+        result = await smart_recommend_courses(query, headless=True)
+        return result
+    except Exception as e:
+        return f"❌ 智能課程評價推薦發生錯誤：{str(e)}"
+
+async def course_review_search_async(course_name: str, category: str = "所有評價", sort_method: str = "推薦高至低") -> str:
+    """
+    課程名稱評價搜尋工具 - 異步版本（內部使用）
+    """
+    try:
+        print(f"📚 開始課程名稱評價搜尋，課程：{course_name}，分類：{category}，排序：{sort_method}")
+        result = await search_by_course_name(
+            course_name=course_name,
+            category=category,
+            sort_method=sort_method,
+            headless=True
+        )
+        return result
+    except Exception as e:
+        return f"❌ 課程名稱評價搜尋發生錯誤：{str(e)}"
+
+async def teacher_review_search_async(teacher_name: str, category: str = "所有評價", sort_method: str = "推薦高至低") -> str:
+    """
+    教師姓名評價搜尋工具 - 異步版本（內部使用）
+    """
+    try:
+        print(f"👨‍🏫 開始教師姓名評價搜尋，教師：{teacher_name}，分類：{category}，排序：{sort_method}")
+        result = await search_by_teacher_name(
+            teacher_name=teacher_name,
+            category=category,
+            sort_method=sort_method,
+            headless=True
+        )
+        return result
+    except Exception as e:
+        return f"❌ 教師姓名評價搜尋發生錯誤：{str(e)}"
+
+# **🔹 同步包裝器工具（供 AutoGen 使用）**
+def smart_course_review_recommend(query: str) -> str:
+    """
+    智能課程評價推薦工具 - 使用自然語言查詢推薦課程評價
+    
+    這個工具會解析自然語言查詢，自動判斷分類和排序方式，從 classin.info 獲取推薦課程評價。
+    適用於模糊查詢和自然語言描述，例如：
+    - "推薦一些自然通識課程"
+    - "有什麼輕鬆的體育課"
+    - "作業少的人文通識課"
+    - "想要找有趣的數學課"
+    
+    Args:
+        query (str): 自然語言查詢字串，描述想要的課程特性
+        
+    Returns:
+        str: Markdown 格式的智能推薦結果，包含解析資訊、推薦條件、統計資料和課程詳情
+    """
+    try:
+        # 檢查是否已經在事件循環中
+        try:
+            loop = asyncio.get_running_loop()
+            # 在現有事件循環中，使用執行緒池執行異步函數
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, smart_course_review_recommend_async(query))
+                return future.result()
+        except RuntimeError:
+            # 沒有運行中的事件循環，直接運行
+            return asyncio.run(smart_course_review_recommend_async(query))
+    except Exception as e:
+        return f"❌ 智能課程評價推薦發生錯誤：{str(e)}"
+
+def course_review_search(course_name: str, category: str = "所有評價", sort_method: str = "推薦高至低") -> str:
+    """
+    課程名稱評價搜尋工具 - 根據課程名稱搜尋評價
+    
+    這個工具會在 classin.info 的搜尋框中輸入課程名稱進行搜尋，
+    適用於想了解特定課程的學生評價和推薦度。
+    
+    Args:
+        course_name (str): 課程名稱或關鍵字，例如「網球」、「程式設計」、「英文」
+        category (str): 評價分類，可選項目：
+                       "所有評價", "人文通識評價", "自然通識評價", 
+                       "社會通識評價", "體育評價"
+        sort_method (str): 排序方式，可選項目：
+                          "推薦高至低", "作業低至高", "考試少至多", 
+                          "收穫高至低", "有趣高至低", "要求少至多", "時間新至舊"
+        
+    Returns:
+        str: Markdown 格式的課程評價搜尋結果，包含評價詳情、推薦度、評分等資訊
+    """
+    try:
+        # 檢查是否已經在事件循環中
+        try:
+            loop = asyncio.get_running_loop()
+            # 在現有事件循環中，使用執行緒池執行異步函數
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, course_review_search_async(course_name, category, sort_method))
+                return future.result()
+        except RuntimeError:
+            # 沒有運行中的事件循環，直接運行
+            return asyncio.run(course_review_search_async(course_name, category, sort_method))
+    except Exception as e:
+        return f"❌ 課程名稱評價搜尋發生錯誤：{str(e)}"
+
+def teacher_review_search(teacher_name: str, category: str = "所有評價", sort_method: str = "推薦高至低") -> str:
+    """
+    教師姓名評價搜尋工具 - 根據教師姓名搜尋評價
+    
+    這個工具會在 classin.info 的搜尋框中輸入教師姓名進行搜尋，
+    適用於想了解特定教師的教學評價和學生回饋。
+    
+    Args:
+        teacher_name (str): 教師姓名，例如「謝錦偉」、「王小明」
+        category (str): 評價分類，可選項目：
+                       "所有評價", "人文通識評價", "自然通識評價", 
+                       "社會通識評價", "體育評價"
+        sort_method (str): 排序方式，可選項目：
+                          "推薦高至低", "作業低至高", "考試少至多", 
+                          "收穫高至低", "有趣高至低", "要求少至多", "時間新至舊"
+        
+    Returns:
+        str: Markdown 格式的教師評價搜尋結果，包含評價詳情、推薦度、評分等資訊
+    """
+    try:
+        # 檢查是否已經在事件循環中
+        try:
+            loop = asyncio.get_running_loop()
+            # 在現有事件循環中，使用執行緒池執行異步函數
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, teacher_review_search_async(teacher_name, category, sort_method))
+                return future.result()
+        except RuntimeError:
+            # 沒有運行中的事件循環，直接運行
+            return asyncio.run(teacher_review_search_async(teacher_name, category, sort_method))
+    except Exception as e:
+        return f"❌ 教師姓名評價搜尋發生錯誤：{str(e)}"
+
+# **🔹 FAQ檢索系統 - 統合進llm.py，使用MMR檢索，返回2筆資料**
+def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
+    """
+    FAQ資料庫檢索 - 使用MMR檢索，返回2筆最相關的資料
+    
+    Args:
+        query (str): 使用者問題
+        relevance_threshold (float): 相關性閾值
+        
+    Returns:
+        dict: 包含檢索結果和相關資訊
+    """
+    print(f"🔍 FAQ檢索，查詢：{query}")
+    
+    # 檢查向量資料庫是否已初始化
+    if vectordb is None:
+        print("❌ vectordb 為 None，尚未初始化")
+        return {
+            "results": [],
+            "max_score": 0,
+            "should_use": False,
+            "threshold": relevance_threshold,
+            "query": query,
+            "error": "向量資料庫尚未初始化"
+        }
+    
+    if "faq" not in vectordb:
+        print("❌ FAQ向量資料庫不存在於 vectordb 中")
+        return {
+            "results": [],
+            "max_score": 0,
+            "should_use": False,
+            "threshold": relevance_threshold,
+            "query": query,
+            "error": "FAQ向量資料庫不存在"
+        }
+    
+    try:
+        print("🔍 開始執行MMR檢索...")
+        # 使用MMR檢索，返回2筆資料
+        docs = vectordb["faq"].max_marginal_relevance_search(query, k=FAQ_CONFIG["MAX_RESULTS"])
+        print(f"✅ MMR檢索完成，找到 {len(docs)} 個結果")
+        
+        results = []
+        for i, doc in enumerate(docs):
+            try:
+                # 解析MMR搜尋結果的JSON格式
+                if hasattr(doc, 'page_content'):
+                    content_data = json.loads(doc.page_content)
+                    
+                    # 從解析的JSON中取得metadata
+                    if 'metadata' in content_data:
+                        question = content_data['metadata'].get('question', 'N/A')
+                        answer = content_data['metadata'].get('answer', 'N/A')
+                    else:
+                        question = content_data.get('question', 'N/A')
+                        answer = content_data.get('answer', 'N/A')
+                else:
+                    # 如果不是JSON格式，嘗試從metadata直接獲取
+                    question = doc.metadata.get('question', 'N/A')
+                    answer = doc.metadata.get('answer', 'N/A')
+                
+                # 模擬相關性分數（因為MMR不提供分數）
+                simulated_score = 0.8 - (i * 0.05)  # 第一個0.8，第二個0.75
+                
+                print(f"📄 結果 {i+1}:")
+                print(f"  問題：{question}")
+                print(f"  答案：{answer[:100]}..." if len(answer) > 100 else f"  答案：{answer}")
+                print(f"  模擬分數：{simulated_score:.3f}")
+                
+                results.append({
+                    "question": question,
+                    "answer": answer,
+                    "score": simulated_score
+                })
+                
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"❌ 解析第{i+1}個文檔時發生錯誤: {e}")
+                continue
+        
+        # 檢查是否有足夠相關的結果
+        max_score = results[0]["score"] if results else 0
+        should_use = len(results) > 0 and max_score >= relevance_threshold
+        
+        if FAQ_CONFIG["LOG_SCORES"]:
+            print(f"📊 FAQ檢索統計:")
+            print(f"  最高分數: {max_score:.3f}")
+            print(f"  閾值: {relevance_threshold}")
+            print(f"  是否使用: {should_use}")
+            print(f"  結果數量: {len(results)}")
+        
+        if should_use:
+            print("✅ FAQ相關性足夠，將提供給LLM")
+            for i, result in enumerate(results, 1):
+                print(f"📋 結果{i}: {result['question']}")
+        else:
+            print("❌ FAQ相關性不足，不會提供給LLM")
+        
+        return {
+            "results": results,
+            "max_score": max_score,
+            "should_use": should_use,
+            "threshold": relevance_threshold,
+            "query": query,
+            "note": "使用MMR檢索（模擬相關性分數）"
+        }
+        
+    except Exception as e:
+        error_str = str(e)
+        print(f"❌ FAQ檢索錯誤：{error_str}")
+        
+        # 降級處理：使用關鍵字搜尋
+        if "Missing vector index configuration" in error_str:
+            print("⚠️ 向量索引尚未建立，使用降級模式（關鍵字搜尋）")
+            
+            try:
+                from google.cloud import firestore
+                client = firestore.Client()
+                faq_ref = client.collection("InfoHub")
+                faq_docs = faq_ref.stream()
+                
+                results = []
+                query_lower = query.lower()
+                
+                for doc in faq_docs:
+                    data = doc.to_dict()
+                    question = data.get('question', '')
+                    answer = data.get('answer', '')
+                    
+                    # 簡單關鍵字匹配
+                    if question and (query_lower in question.lower() or any(word in question.lower() for word in query_lower.split())):
+                        results.append({
+                            "question": question,
+                            "answer": answer,
+                            "score": 0.75,  # 給一個固定的相關性分數
+                            "fallback": True
+                        })
+                
+                # 限制結果數量為2個
+                results = results[:FAQ_CONFIG["MAX_RESULTS"]]
+                max_score = results[0]["score"] if results else 0
+                should_use = len(results) > 0 and max_score >= relevance_threshold
+                
+                print(f"📊 降級搜尋完成，找到 {len(results)} 個結果")
+                
+                return {
+                    "results": results,
+                    "max_score": max_score,
+                    "should_use": should_use,
+                    "threshold": relevance_threshold,
+                    "query": query,
+                    "note": "使用關鍵字搜尋（向量索引未建立）",
+                    "fallback_mode": True
+                }
+                
+            except Exception as fallback_error:
+                print(f"❌ 降級搜尋也失敗：{str(fallback_error)}")
+        
+        return {
+            "results": [],
+            "max_score": 0,
+            "should_use": False,
+            "threshold": relevance_threshold,
+            "query": query,
+            "error": error_str,
+            "vector_index_missing": "Missing vector index configuration" in error_str
+        }
+
+def faq(query: str) -> str:
+    """
+    查詢常見問題與解答 - 使用MMR檢索，返回最多2筆相關結果
+    """
+    print("📥 接收到的 faq query:", query)
+    
+    # 使用MMR檢索
+    search_result = faq_universal_search(query, relevance_threshold=FAQ_CONFIG["RELEVANCE_THRESHOLD"])
+    
+    if not search_result["should_use"]:
+        # 相關性不足，返回提示訊息
+        print(f"📊 FAQ相關性不足 (最高分數: {search_result['max_score']:.3f}, 閾值: {search_result['threshold']})")
+        return "目前FAQ資料庫中沒有找到高度相關的問題解答。"
+    
+    # 相關性足夠，格式化結果
+    print(f"✅ FAQ相關性足夠 (最高分數: {search_result['max_score']:.3f})")
+    
+    formatted_results = []
+    for i, result in enumerate(search_result["results"], 1):
+        if result["score"] >= search_result["threshold"]:  # 只顯示超過閾值的結果
+            if FAQ_CONFIG["LOG_SCORES"]:
+                formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}\n(相關性: {result['score']:.3f})"
+            else:
+                formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}"
+            formatted_results.append(formatted_result)
+    
+    if not formatted_results:
+        return "目前FAQ資料庫中沒有找到高度相關的問題解答。"
+    
+    return "\n\n".join(formatted_results)
+
+# **🔹 載入向量資料庫 - FAQ使用MMR支援的格式**
 async def load_vector_database():
     file_path = "/home/a411401516/gradAIde_shared/local/PDF/畢業門檻"
     pages = []
     client = firestore.Client()
-    embedding = OllamaEmbeddings(model="nomic-embed-text")
+    embedding = OllamaEmbeddings(model="bge-m3:latest")
 
     # 讀取 PDF - 修課規範
     for file in os.listdir(file_path):
@@ -96,7 +504,6 @@ async def load_vector_database():
     # 載入 Firestore Teacher 資料
     teacher_docs = []
     teacher_page = []
-    client = firestore.Client()
     teacher_ref = client.collection("Teacher")
     teacher_stream = teacher_ref.stream()
 
@@ -119,7 +526,48 @@ async def load_vector_database():
     )
     print(f"✅ 已載入 Firestore 教師數量: {len(teacher_page)}")
 
-    # 建立 retriever 工具（只保留 rules 和 teachers）
+    # 🔹 載入FAQ資料 - 支援MMR檢索的格式
+    faq_docs = []
+    faq_page = []
+    faq_ref = client.collection("InfoHub")  # 你的FAQ集合名稱
+    faq_stream = faq_ref.stream()
+
+    for doc in faq_stream:
+        data = doc.to_dict()
+        question = data.get('question', '')
+        answer = data.get('answer', '')
+        
+        if question:  # 確保問題不為空
+            # 建立支援MMR的Document格式
+            # page_content包含完整的JSON數據，以便MMR檢索時能正確解析
+            content_json = json.dumps({
+                "metadata": {
+                    "question": question,
+                    "answer": answer
+                }
+            }, ensure_ascii=False)
+            
+            faq_docs.append(Document(
+                page_content=content_json,  # JSON格式的完整內容
+                metadata={
+                    "question": question,  # 同時保留在metadata中
+                    "answer": answer
+                }
+            ))
+
+    faq_page.extend(faq_docs)
+
+    # 建立FAQ向量資料庫 - 支援MMR檢索
+    faq_store = FirestoreVectorStore.from_documents(
+        documents=faq_page,
+        embedding=embedding,
+        collection="faq_vector",
+        client=client
+    )
+    print(f"✅ 已載入 FAQ 數量: {len(faq_page)}")
+    print(f"✅ FAQ 支援MMR檢索格式")
+
+    # 建立 retriever 工具（不包含FAQ工具，因為會自動調用）
     rules_tool = create_retriever_tool(
         rules_store.as_retriever(search_kwargs={"k": 10}),
         name="rules",
@@ -132,12 +580,14 @@ async def load_vector_database():
         description="查詢教師資訊"
     )
 
+    # FAQ不需要建立tool，因為會在每次對話中自動檢索
     tools = [rules_tool, teachers_tool]
 
     return {
         "vectordb": {
             "rules": rules_store,
-            "teachers": teachers_store
+            "teachers": teachers_store,
+            "faq": faq_store  # 支援MMR的版本
         },
         "tools": tools
     }
@@ -155,7 +605,7 @@ async def init_vectordb():
 def teachers(query: str) -> str:
     """查詢教師資訊"""
     print("📥 接收到的 teachers query:", query)
-    docs_sim = vectordb["teachers"].similarity_search(query, k=3)
+    docs_sim = vectordb["teachers"].similarity_search(query, k=1)
     docs_mmr = vectordb["teachers"].max_marginal_relevance_search(query, 1,
                             filters=FieldFilter("metadata.id", "==", query)
                                                                 )
@@ -176,7 +626,7 @@ def teachers(query: str) -> str:
 def rules(query: str) -> str:
     """查詢修課與畢業規定"""
     print("📥 接收到的 rules query:", query)
-    docs_mmr = vectordb["rules"].max_marginal_relevance_search(query, 2)
+    docs_mmr = vectordb["rules"].max_marginal_relevance_search(query, 1)
     unique_docs = list({doc.page_content: doc for doc in docs_mmr}.values())
     results = "\n\n".join([
         doc.page_content.encode('utf-8').decode('unicode_escape')
@@ -185,22 +635,52 @@ def rules(query: str) -> str:
 
     return results
 
-# 🧠 AutoGen 多代理對話整合
+# 🔹 新增：清理推薦問題中的格式化符號
+def clean_recommended_questions(content: str) -> str:
+    """
+    清理推薦問題中的格式化符號
+    """
+    if not content:
+        return content
+    
+    # 移除各種markdown格式符號
+    cleaned = content
+    cleaned = cleaned.replace('**', '')  # 移除粗體標記
+    cleaned = cleaned.replace('__', '')  # 移除底線粗體
+    cleaned = cleaned.replace('~~', '')  # 移除刪除線
+    cleaned = cleaned.replace('***', '') # 移除粗體斜體
+    cleaned = cleaned.replace('*', '')   # 移除剩餘的星號
+    cleaned = cleaned.replace('###', '') # 移除標題符號
+    cleaned = cleaned.replace('##', '')  # 移除標題符號
+    cleaned = cleaned.replace('#', '')   # 移除標題符號
+    
+    # 移除其他可能的格式化符號
+    import re
+    cleaned = re.sub(r'\[.*?\]', '', cleaned)  # 移除方括號內容
+    # 注意：這裡不移除所有圓括號，因為可能包含重要資訊
+    
+    return cleaned.strip()
+
+# 🧠 AutoGen 多代理對話整合 - 精簡版 + FAQ MMR檢索 + 增強調試
 def start_multi_agent_chat(user_input: str):
     from autogen import UserProxyAgent, ConversableAgent, GroupChat, GroupChatManager
 
     if user_input.strip() in ["你好", "嗨", "哈囉", "您好", "Hello", "hello"]:
         return "您好，我是智慧大學AI助理，有什麼需要我幫忙的嗎？"
 
-    # 使用者
+    # 🔍 每次對話開始前，先執行FAQ MMR檢索
+    faq_search_result = faq_universal_search(user_input, relevance_threshold=FAQ_CONFIG["RELEVANCE_THRESHOLD"])
+    
+    # 🔥 UserProxyAgent - 自動模式
     user = UserProxyAgent(
         name="User",
-        is_termination_msg=lambda x: "Final Answer:" in x,
         human_input_mode="NEVER",
-        code_execution_config={"use_docker": False},
+        code_execution_config=False,
+        max_consecutive_auto_reply=0,
+        is_termination_msg=lambda x: False,
     )
 
-    # Step 1: Question Inspector
+    # ✅ 精簡 Question Inspector
     inspector = ConversableAgent(
         name="QuestionInspector",
         llm_config={
@@ -209,19 +689,23 @@ def start_multi_agent_chat(user_input: str):
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
         },
-        system_message="""
-你是問題檢查員，負責判斷使用者的問題是否需要查詢資料。
-如果問題牽涉到課程、修業規則、機測、英檢、畢業學分、教師，就需要透過檢索獲得資訊。
+        system_message="""你是問題檢查員。請用繁體中文簡單判斷。
 
-請根據內容，只回答以下兩句其中之一：
-- 需要檢索
-- 不需要檢索
+判斷規則（只看問題表面）：
+- 問課程、教師、規定、學分 → 回答：需要檢索
+- 一般聊天、問候 → 回答：不需要檢索
 
-請注意只能回答上面其中一句，不能多加說明。不要顯示思考過程。
-"""
+**重要**：
+- 不要分析用戶動機或深層需求
+- 不要推測用戶想要什麼
+- 只看問題字面意思
+- 圖片相關問題通常涉及課程 → 需要檢索
+
+只回答上述其中一句，請使用繁體中文。""",
+        human_input_mode="NEVER",
     )
 
-    # Step 2: Retriever Agent（含工具）
+    # ✅ 更新 Retriever Agent - 包含FAQ MMR檢索邏輯
     retriever = ConversableAgent(
         name="RetrieverAgent",
         llm_config={
@@ -230,71 +714,75 @@ def start_multi_agent_chat(user_input: str):
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
         },
-        system_message = f"""
-你是智慧大學的資料檢索代理，負責根據上一位代理人的指示，判斷是否需要使用工具進行查詢。
+        system_message=f"""你是資料檢索代理。請用繁體中文執行檢索任務。
 
----
+**重要：FAQ資料庫已自動使用MMR檢索完成**
+- FAQ檢索結果相關性分數：{faq_search_result['max_score']:.3f}
+- 是否提供FAQ結果給回答代理：{faq_search_result['should_use']}
+- 檢索到的FAQ結果數量：{len(faq_search_result.get('results', []))}
 
-執行規則：
+**執行邏輯：**
+1. 查看 QuestionInspector 的判斷結果
+2. 如果是「不需要檢索」→ 回應「檢索完成」（FAQ結果會自動提供）
+3. 如果是「需要檢索」→ 根據問題選擇適當的額外工具執行檢索
 
-1. 若上一位代理的回答是「需要檢索」，請使用對應的工具查詢。
-2. 若上一位回答是「不需要檢索」，請直接回覆：
-   Observation: 不需查詢。
-3. 請使用繁體中文的原始用語作為查詢內容，避免更改使用者的語意。
+**額外工具選擇指南：**
 
----
+【基本資料查詢】
+- teachers：查詢教師聯絡資訊（輸入教師姓名）
+- rules：查詢畢業與修課規定（輸入關鍵字，如「畢業規定」、「英文門檻」、「學分要求」）
 
-工具使用規則：
+【課程資訊查詢】
+- course_search：依系所、星期、時段查詢課程（輸入如「資管系 禮拜四 下午課」）
+- course_name_search：查詢課程名稱相關資料（輸入課程名稱關鍵字）
+- teacher_course_search：查詢特定教師開設的課程（輸入教師姓名，如「謝錦偉」、「陳建良」）
 
-teachers 工具（查詢教師資訊）：
-- 請使用 metadata.id（即教師「姓名」欄位）進行查詢。
-- 錯誤範例：歐思鼎教授的信箱？
-- 正確查詢關鍵字：歐思鼎
-- 請勿傳整句話，僅擷取教師姓名作為查詢輸入。
+【課程評價查詢】
+- smart_course_review_recommend：智能推薦課程評價（自然語言，如「推薦輕鬆的體育課」）
+- course_review_search：特定課程評價搜尋（輸入課程名稱，如「網球」、「程式設計」）
+- teacher_review_search：特定教師評價搜尋（輸入教師姓名，如「謝錦偉」）
 
----
+**快速決策原則：**
+- 問「缺什麼領域課程」+ 圖片顯示缺課 → 直接用 course_search("[缺失領域]通識領域課程")
+- 問「缺什麼領域課程」→ 直接用 course_search("社會科學領域課程推薦")
+- 問「某教師資訊」→ 直接用 teachers("教師姓名")
+- 問「某教師開什麼課」→ 直接用 teacher_course_search("教師姓名")
+- 問「某時段課程」→ 直接用 course_search("時段條件")
+- 問「畢業規定」→ 直接用 rules("畢業規定")
 
-course_search 工具（查詢開課資訊）：
-- 當使用者詢問「什麼課程」、「有哪些課」、「開課資訊」、「課程時間表」、「選課」時，請使用此工具
-- 支援自然語言查詢，如「星期一早上的人文通識」、「資管系的課程」、「下午有什麼課」
-- 請將使用者的原始查詢傳給此工具，它會自動解析條件
-- 這個工具會即時查詢最新的開課資訊
-
----
-
-rules 工具（查詢修課與畢業規定）：
-- 當問題與以下主題有關時，請使用「學年度 + 關鍵詞」格式查詢：
-  - 機測
-  - 英文檢定
-  - 畢業學分
-  - 學程規定
-  - 修課規範
-
-- 建議查詢格式：
-  例如：108學年度 英檢
-       112學年度 機測規定
-
----
-
-禁止事項：
-- 不要自行解釋使用者問題。
-- 不要加入評論。
-- 僅負責執行查詢或略過查詢。
-- 不要顯示思考過程。
-
----
-
-使用者問題如下：
-{user_input}
-"""
+**重要提醒：**
+- FAQ資料庫已自動使用MMR檢索，最多返回2筆最相關結果
+- 相關結果會自動提供給回答代理
+- 你只需要選擇其他必要的檢索工具
+- 執行工具後回應「檢索完成」
+""",
+        human_input_mode="NEVER",
     )
 
-    # 🔹 註冊工具（移除了 courses 工具，只保留必要的）
-    register_function(f=teachers, caller=retriever, executor=retriever, name="teachers", description="查詢教師資訊")
-    register_function(f=rules, caller=retriever, executor=retriever, name="rules", description="查詢修業規定")
-    register_function(f=course_search, caller=retriever, executor=retriever, name="course_search", description="查詢開課資訊和課程時間表")
+    # ✅ Primary Answer Agent - 重點：繁體中文 + 自然回答 + 多FAQ整合 + 增強調試
+    faq_context = ""
+    if faq_search_result["should_use"]:
+        # ✅ 處理最多2個結果
+        results = faq_search_result["results"]
+        if len(results) > 0:
+            faq_context_parts = []
+            for i, result in enumerate(results, 1):
+                if result["score"] >= faq_search_result["threshold"]:
+                    faq_context_parts.append(f"Q{i}: {result['question']}\nA{i}: {result['answer']}")
+            
+            if faq_context_parts:
+                faq_context = f"\n\n【FAQ資料庫相關內容】\n" + "\n\n".join(faq_context_parts)
 
-    # Step 3: Primary Answerer
+    # ✅ 添加調試輸出
+    print("🔍 FAQ上下文調試：")
+    print(f"📊 should_use: {faq_search_result['should_use']}")
+    print(f"📊 結果數量: {len(faq_search_result.get('results', []))}")
+    print(f"📊 最高分數: {faq_search_result.get('max_score', 0):.3f}")
+    print(f"📊 閾值: {faq_search_result.get('threshold', 0.7):.1f}")
+    print(f"📋 faq_context 內容：")
+    print(faq_context if faq_context else "（無相關FAQ內容）")
+    print("="*80)
+    
     primary = ConversableAgent(
         name="PrimaryAnswerAgent",
         llm_config={
@@ -303,57 +791,27 @@ rules 工具（查詢修課與畢業規定）：
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
         },
-        system_message = """
-你是智慧大學資訊管理學系的主要回答者，負責清楚、專業、條理分明地回答學生的問題。
+        system_message=f"""你是智慧大學資管系AI助理。
 
----
+**可用的FAQ資料庫內容：**{faq_context}
 
-請遵守以下規則：
+回答指南：
+1. 使用繁體中文直接回答問題，語氣親切自然
+2. 如果有提供FAQ資料庫內容，可以參考並自然整合進回答中
+3. 如果沒有FAQ內容或相關性不足，根據常識和其他檢索資料回答
+4. 課程時段說明：D1-D2是上午第一二節，D3-D4是上午第三四節，D5-D6是下午第五六節，等（不給具體時間）
+5. 通識課程說明：智慧大學必修跨領域課程，分人文藝術、自然科技、社會科學三領域
+6. 課程評價說明：包含學生推薦度、作業量、考試難度、收穫程度等真實評價
+7. 機測說明：資管系重要的程式語言測驗項目，是電腦上機實作考試，通常考驗程式設計能力
+8. 避免機器人式用語，像朋友在回答
 
-1. 回答時請直接切入重點，條列並說明清楚，不要出現「根據 observation」、「你提到...」等敘述。
-2. 避免使用「我」這個主詞，例如「我看到」、「我認為」等說法，改以第三人稱或說明式句型作答。
-3. 使用者問題若涉及教師資訊，若無法查到結果，請提醒可能是姓名拼寫錯誤或不完整，建議再次確認教師姓名。
-4. 回答內容必須是可信、完整、條理清楚的說明，風格如學長姊協助解惑。
-5. 回答請使用繁體中文，語氣自然、禮貌、專業。
-6. 若找不到答案，請簡潔說明「目前沒有明確資訊」，不要編造內容。
-7. 🔹 若回答中涉及課程時間的「早上」或「下午」等描述，請對照以下節次代碼：
-   - 早上：D1～D4（含08:10–12:00）
-   - 下午：D5～D8（含13:10–17:00）
-   - 晚上：D9～DC（含17:10之後）
-8. 🔹 重要：不要顯示思考過程，直接提供最終答案。
+使用者問題：{user_input}
 
-禁止使用簡體字。
-"""
+記住：務必使用繁體中文，禁用簡體字！""",
+        human_input_mode="NEVER",
     )
 
-    # Step 4: Helper Answerer
-    helper = ConversableAgent(
-        name="HelperAnswerAgent",
-        llm_config={
-            "model": "qwen3:latest",
-            "temperature": 0.6,
-            "base_url": "http://localhost:11434",
-            "api_type": "ollama",
-        },
-        system_message = """
-你是智慧助理的輔助回答者，負責補充主要回答內容的延伸資訊或提醒。
-
----
-
-請遵守以下規則：
-
-1. 不要重複主要回答的內容，也不要用「根據上述回覆」、「如剛剛所說」等句子開頭。
-2. 專注於補充背景知識、提供額外資訊、提醒學生注意事項，或給出實用建議。
-3. 若問題與教師有關，也可提醒學生再次確認教師姓名是否正確（例如是否打錯或缺字）。
-4. 回覆應簡潔清楚、自然口語，語氣親切溫和但具專業感。
-5. 僅補充，不需總結或重述主要回覆。
-6. 🔹 重要：不要顯示思考過程，直接提供最終答案。
-
-請使用繁體中文，且禁止使用簡體字。
-"""
-    )
-
-    # Question Recommender
+    # ✅ Question Recommender - 重點：繁體中文 + 相關性推薦
     recommender = ConversableAgent(
         name="QuestionRecommender",
         llm_config={
@@ -362,130 +820,241 @@ rules 工具（查詢修課與畢業規定）：
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
         },
-        system_message="""
-你是下一個可能問題推薦者，負責根據目前的對話內容預測使用者接下來可能會問的三個問題。
+        system_message="""你負責分析前面的回答內容，判斷查詢的完整性，並推薦能夠延續話題的下一個問題。
 
-請嚴格按照以下格式回傳：
+**分析邏輯：**
+
+1. **話題完整性判斷：**
+   - 如果回答包含課程評價但缺少開課資訊 → 推薦查詢開課狀況
+   - 如果回答包含開課資訊但缺少學生評價 → 推薦查詢課程評價
+   - 如果回答包含課程名稱但缺少教師資訊 → 推薦查詢授課教師
+   - 如果回答包含教師姓名但缺少其他課程 → 推薦查詢該教師的其他課程
+   - 如果回答關於修課規定但缺少具體課程 → 推薦查詢相關課程
+
+2. **延續性推薦：**
+   - 提取回答中的關鍵資訊（課程名稱、教師姓名、系所、時段等）
+   - 基於這些資訊生成具體的後續問題
+   - 問題必須能夠填補資訊缺口或深化理解
+
+3. **推薦原則：**
+   - 優先推薦能完成當前話題的問題
+   - 其次推薦相關延伸問題
+   - 問題必須具體明確，包含具體的課程名稱或教師姓名
+   - 避免重複已經回答的內容
+
+**問題類型範例：**
+
+**補完型問題（優先）：**
+- 「[具體課程名稱]在這學期是否有開課？」
+- 「[教師姓名]老師還有開設哪些課程？」
+- 「[課程名稱]的學生評價如何？」
+- 「[教師姓名]老師的教學評價怎麼樣？」
+
+**延伸型問題（次要）：**
+- 「還有其他[領域/類型]的推薦課程嗎？」
+- 「[時段/星期]還有什麼課程可以選？」
+- 「[系所]還有哪些必修課程？」
+
+**推薦格式：**
 
 推薦問題：
-1. 第一個問題？
-2. 第二個問題？
-3. 第三個問題？
 
-注意事項：
-- 每個問題都必須以「？」結尾
-- 問題應該與先前對話相關但未被提問過
-- 風格請自然口語，符合大學生日常提問風格
-- 你是智慧大學所屬，請不要提到其他學校名稱
-- 不要加上任何其他解釋文字
-- 🔹 重要：不要顯示思考過程，直接提供最終答案
-"""
+1. [基於回答內容的具體問題]？
+
+2. [補完資訊缺口的問題]？
+
+3. [相關延伸問題]？
+
+**重要提醒：**
+- 問題中必須包含具體的課程名稱、教師姓名或明確條件
+- 禁止使用格式化符號（**、#、[]等）
+- 使用繁體中文
+- 避免推薦與生活、社團、行政流程無關的問題
+
+**禁止行為：**
+- 禁止解說任何課程內容
+- 禁止重複 PrimaryAnswerAgent 已回答的資訊
+- 禁止給予學習建議或選課建議
+- 禁止使用 **粗體**、# 標題等格式化符號
+- 禁止回答問題，只能推薦問題
+
+記住：你的唯一職責是推薦 3 個後續問題，其他什麼都不做！""",
+        human_input_mode="NEVER",
+        is_termination_msg=lambda x: "推薦完成" in x.get("content", ""),
     )
 
-    # 建立 Group Chat
+    # 🔹 註冊工具函數 - 使用同步包裝器版本
+    register_function(f=teachers, caller=retriever, executor=retriever, name="teachers", description="查詢教師資訊")
+    register_function(f=rules, caller=retriever, executor=retriever, name="rules", description="查詢修業規定")
+    register_function(f=course_search, caller=retriever, executor=retriever, name="course_search", description="查詢開課資訊")
+    register_function(f=course_name_search, caller=retriever, executor=retriever, name="course_name_search", description="根據課程名稱查詢")
+    
+    # 🔹 新增：註冊教師課程搜尋工具
+    register_function(f=teacher_course_search, caller=retriever, executor=retriever, name="teacher_course_search", description="查詢教師開設的課程")
+    
+    # 🔹 註冊課程評價工具 - 使用同步包裝器版本
+    register_function(f=smart_course_review_recommend, caller=retriever, executor=retriever, name="smart_course_review_recommend", description="智能推薦課程評價")
+    register_function(f=course_review_search, caller=retriever, executor=retriever, name="course_review_search", description="課程名稱評價搜尋")
+    register_function(f=teacher_review_search, caller=retriever, executor=retriever, name="teacher_review_search", description="教師姓名評價搜尋")
+
+    # 🔥 固定順序執行
     group_chat = GroupChat(
-        agents=[user, inspector, retriever, primary, helper, recommender],
+        agents=[user, inspector, retriever, primary, recommender],
         messages=[],
-        max_round=7,
+        max_round=6,
         speaker_selection_method="round_robin",
+        allow_repeat_speaker=False,
         enable_clear_history=True,
     )
 
-    # 管理員
+    # ✅ GroupChat Manager - 重點：流程控制
     manager = GroupChatManager(
         groupchat=group_chat,
         llm_config={
             "model": "qwen3:latest",
-            "temperature": 0.3,
+            "temperature": 0.2,
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
-        }
+        },
+        system_message="""群組對話管理員，確保流程順暢。
+
+執行順序：User → Inspector → Retriever → Primary → Recommender
+
+管理重點：
+- FAQ資料庫已自動使用MMR檢索完成，最多返回2筆結果
+- Inspector 準確分類問題
+- Retriever 精確執行額外查詢（包含教師課程搜尋和課程評價工具）
+- Primary 整合FAQ和其他檢索結果，用繁體中文自然回答
+- Recommender 用繁體中文推薦問題"""
     )
 
-    result = user.initiate_chat(manager, message=user_input, interactive=False)
+    # 執行對話
+    result = user.initiate_chat(
+        recipient=manager, 
+        message=user_input,
+        interactive=False,
+        clear_history=True
+    )
 
-    # 🔹 分離主要回答和推薦問題，並過濾思考內容
+    # 處理回應結果
+    cc = OpenCC('s2tw')
     primary_content = ""
-    helper_content = ""
     recommended_content = ""
     
-    for i, message in enumerate(result.chat_history):
+    for message in result.chat_history:
+        message['content'] = cc.convert(message['content'])
         name = message.get("name", "")
         content = message.get("content", "").strip()
         
-        # 🔹 過濾思考內容
+        # 過濾思考內容
+        if not content:
+            continue
         content = filter_thinking_content(content)
         
-        if name == "PrimaryAnswerAgent" and content and "Final Answer:" not in content:
-            # 移除 [PRIMARY_END] 標記
-            clean_content = content.replace("[PRIMARY_END]", "").strip()
-            if clean_content:
-                primary_content = clean_content
+        def is_status_message(text: str) -> bool:
+            """判斷是否為狀態訊息"""
+            if not text:
+                return True
             
-        elif name == "HelperAnswerAgent" and content and "Final Answer:" not in content:
-            # 提取 [HELPER_START] 和 [HELPER_END] 之間的內容
-            if "[HELPER_START]" in content and "[HELPER_END]" in content:
-                start_idx = content.find("[HELPER_START]") + len("[HELPER_START]")
-                end_idx = content.find("[HELPER_END]")
-                helper_content = content[start_idx:end_idx].strip()
-            else:
-                # 如果沒有標記，直接使用整個內容
-                helper_content = content.strip()
+            # 短訊息且只包含狀態關鍵字的才算狀態訊息
+            if len(text.strip()) < 20:
+                status_keywords = [
+                    "需要檢索", "不需要檢索", "檢索完成", "不需查詢",
+                    "主要回答完成", "推薦完成", "對話結束",
+                    "執行完成", "處理完成"
+                ]
+                return any(keyword in text for keyword in status_keywords)
             
+            return False
+        
+        # 跳過狀態訊息
+        if is_status_message(content):
+            continue
+            
+        if name == "PrimaryAnswerAgent" and content:
+            lines = content.split('\n')
+            useful_lines = [line for line in lines if line.strip() and 
+                          not any(marker in line for marker in ["主要回答完成", "回答完成", "完成"])]
+            if useful_lines:
+                primary_content = '\n'.join(useful_lines)
+                
         elif name == "QuestionRecommender" and content:
-            recommended_content = content.strip()
+            if "推薦問題：" in content:
+                lines = content.split('\n')
+                useful_lines = [line for line in lines if line.strip() and 
+                              not any(marker in line for marker in ["推薦完成", "對話結束", "完成"])]
+                if useful_lines:
+                    cleaned_lines = [clean_recommended_questions(line) for line in useful_lines]
+                    recommended_content = '\n'.join(cleaned_lines)
 
-    # 🔹 組合最終回答
+    # 組合最終回答
     final_response_parts = []
     
     if primary_content:
         final_response_parts.append(primary_content)
     
-    if helper_content:
-        final_response_parts.append(helper_content)
-    
-    # 最終回答
     if final_response_parts:
         base_reply = "\n\n".join(final_response_parts)
     else:
         base_reply = "目前無法取得回答內容。"
-        print("❌ 沒有收集到任何有效回答")
 
-    # 🔹 將推薦問題添加到回答末尾，供前端提取使用
+    # 添加推薦問題
     if recommended_content:
         base_reply += f"\n\n{recommended_content}"
     
-    # 🔹 最終過濾：確保最終回答也沒有思考內容
+    # 最終過濾
     base_reply = filter_thinking_content(base_reply)
+    converted = cc.convert(base_reply)
     
-    return base_reply
+    return converted
+
 
 def interpret_image(base64_image: str, question: str = "這張圖在說什麼？") -> str:
     """
-    用 GPT-4 Vision 解讀 base64 圖片，回傳中文描述文字。
+    用 GPT-4 Vision 解讀課程評價診斷圖片，僅返回客觀分析資訊
     """
     print("🖼️ 使用 GPT-4 Vision 處理圖片中...")
 
     vision_model = ChatOpenAI(
-        model="gpt-4.1-2025-04-14",
+        model="gpt-4o",
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url="https://api.openai.com/v1",
-        temperature=0.3,
-        max_tokens=1024,
+        temperature=0.1,
+        max_tokens=1000,
     )
+
+    # 🔹 精簡的客觀分析提示詞
+    objective_prompt = """
+分析這張智慧大學資訊管理學系的課程評價診斷圖片。
+
+請客觀描述：
+1. 圖片中顯示的通識教育領域狀態
+2. 哪些領域標示為「未完成」(通常是驚嘆號!或紅色標記)
+3. 哪些領域標示為「已完成」(通常是綠色勾選✓)
+4. 如果有學分數字，請說明
+
+通識領域包括：
+- 人文與藝術領域
+- 自然與科技領域  
+- 社會科學領域
+
+請只回傳客觀的分析結果，不需要建議或問候語。
+使用繁體中文回答。
+"""
 
     # 圖片格式設定
     image_payload = {
         "type": "image_url",
         "image_url": {
             "url": f"data:image/jpeg;base64,{base64_image}",
+            "detail": "high"
         },
     }
 
     messages = [
         HumanMessage(
             content=[
-                {"type": "text", "text": question},
+                {"type": "text", "text": objective_prompt},
                 image_payload
             ]
         )
@@ -497,7 +1066,7 @@ def interpret_image(base64_image: str, question: str = "這張圖在說什麼？
         return response.content
     except Exception as e:
         print("❌ 圖片解析錯誤：", e)
-        return "圖片無法解析。請重新上傳或改用文字提問。"
+        return f"圖片無法解析。錯誤：{str(e)}"
 
 def smart_multi_agent_chat(user_input):
     """
@@ -509,56 +1078,73 @@ def smart_multi_agent_chat(user_input):
         # 自動補文字敘述（若缺）
         user_text = user_input.get("text", "").strip()
         if not user_text:
-            user_text = """
-            這張圖可能是學生的修課結果，請根據圖片內容找出缺少的修課類別。
-            驚嘆號的圖案代表「未完成」相關課程的含意。
-            綠色打勾的圖案代表「已完成」相關課程的含意。
-            請你回傳所缺少的通識領域類別名稱。
-            """
+            user_text = "請分析這張課程評價診斷圖片"
 
         # 圖片描述處理
         image_text = interpret_image(user_input["image"], user_text)
 
-        # 建立結構化的 prompt
+        # 🔥 精簡圖片處理prompt
         combined_prompt = f"""
-            🖼️ 使用者提供了一張圖片。
+圖片分析：{image_text}
 
-            📷 圖片內容分析如下：
-            {image_text}
+使用者問題：{user_text}
 
-            🧾 使用者希望詢問的內容如下：
-            {user_text}
-
-            🎯 請根據圖片與問題，協助判斷是否缺少修課類別、是否符合畢業條件，並結合可用資料工具給予回覆。
-            如使用者圖片資訊包括了缺少的通識領域類別名稱，請從course_search工具檢索出該通識相關課程。
-        """
-
+請根據圖片內容用繁體中文回答問題，如涉及缺少的通識領域，請查詢相關課程。
+"""
         return start_multi_agent_chat(combined_prompt)
-
     else:
-        print("📝 純文字對話，使用本地 Ollama 模式")
+        print("📝 純文字對話")
         return start_multi_agent_chat(user_input)
 
 def filter_thinking_content(text: str) -> str:
     """
-    過濾掉 qwen3 模型的思考內容 (<think>...</think>)
+    過濾掉 qwen3 模型的思考內容和不必要的輸出
     """
     import re
     
-    # 使用正則表達式移除 <think> 標籤及其內容
-    # 支援多行匹配，不區分大小寫
+    # 1. 移除 <think> 標籤及其內容
     pattern = r'<think>.*?</think>'
     filtered_text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
     
-    # 清理多餘的空行
+    # 2. 移除其他常見的狀態訊息
+    status_patterns = [
+        r'檢索完成.*',
+        r'主要回答完成.*',
+        r'輔助回答完成.*',
+        r'推薦完成.*',
+        r'對話結束.*',
+        r'請回答者處理.*',
+        r'直接回答即可.*'
+    ]
+    
+    for pattern in status_patterns:
+        filtered_text = re.sub(pattern, '', filtered_text, flags=re.IGNORECASE)
+    
+    # 3. 移除markdown格式化符號
+    filtered_text = filtered_text.replace('**', '')  # 移除粗體標記
+    filtered_text = filtered_text.replace('__', '')  # 移除底線粗體
+    filtered_text = filtered_text.replace('~~', '')  # 移除刪除線
+    filtered_text = filtered_text.replace('***', '') # 移除粗體斜體
+    filtered_text = filtered_text.replace('#', '')
+    # 小心處理星號，避免移除列表項目
+    filtered_text = re.sub(r'\*(?!\s)', '', filtered_text)  # 移除非列表的星號
+    
+    # 4. 清理多餘的空行和空格
     lines = filtered_text.split('\n')
     cleaned_lines = []
     
+    prev_empty = False
     for line in lines:
         stripped_line = line.strip()
-        if stripped_line:  # 保留非空行
-            cleaned_lines.append(line)
-        elif cleaned_lines and cleaned_lines[-1].strip():  # 保留一個空行作為段落分隔
+        
+        if stripped_line:  # 非空行
+            cleaned_lines.append(line.rstrip())  # 保留原始縮排，移除尾部空格
+            prev_empty = False
+        elif not prev_empty:  # 避免連續空行
             cleaned_lines.append('')
+            prev_empty = True
     
-    return '\n'.join(cleaned_lines).strip()
+    # 移除開頭和結尾的空行
+    result = '\n'.join(cleaned_lines).strip()
+    
+    return result

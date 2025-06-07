@@ -1,5 +1,7 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
+import json
+import os
 
 # 檢查是否已初始化 Firebase Admin
 if not firebase_admin._apps:
@@ -8,10 +10,38 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-# 🔹 新增課程
-def add_course(course_data):
+# 🔹 讀取 JSON 檔案的函數
+def load_faq_data(file_path='faq_data.json'):
+    """
+    從 JSON 檔案讀取 FAQ 資料
+    
+    Args:
+        file_path (str): JSON 檔案路徑，預設為 'faq_data.json'
+    
+    Returns:
+        list: FAQ 資料列表，若讀取失敗則回傳空列表
+    """
     try:
-        doc_ref = db.collection('Course').add(course_data)
+        # 檢查檔案是否存在
+        if not os.path.exists(file_path):
+            print(f"❌ 檔案 '{file_path}' 不存在")
+            return []
+        
+        with open(file_path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+            print(f"✅ 成功讀取 {len(data)} 筆 FAQ 資料")
+            return data
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON 格式錯誤: {e}")
+        return []
+    except Exception as e:
+        print(f"❌ 讀取 FAQ 資料時發生錯誤: {e}")
+        return []
+
+# 🔹 新增課程
+def add_course(data):
+    try:
+        doc_ref = db.collection('InfoHub').add(data)
         print(f"✅ 課程已新增，文件 ID: {doc_ref[1].id}")
     except Exception as e:
         print(f"❌ 新增課程時發生錯誤: {e}")
@@ -19,7 +49,7 @@ def add_course(course_data):
 # 🔹 取得所有課程
 def get_courses():
     try:
-        courses = db.collection('Course').stream()
+        courses = db.collection('InfoHub').stream()
         for course in courses:
             print(f"{course.id} => {course.to_dict()}")
     except Exception as e:
@@ -42,7 +72,6 @@ def get_filtered_data(collection_name, field_name, operator, value):
             print("🔍 沒有符合條件的文件")
     except Exception as e:
         print(f"❌ 查詢時發生錯誤: {e}")
-
 
 # 🔹 更新課程資料
 def update_course(course_id, update_data):
@@ -80,84 +109,77 @@ def delete_collection(collection_name):
     except Exception as e:
         print(f"❌ 刪除集合時發生錯誤: {e}")
 
+# 🔹 批次新增 FAQ 資料（更有效率）
+def add_faq_batch_transaction(faq_list):
+    try:
+        if not faq_list:
+            print("⚠️ 沒有資料可以新增")
+            return
+        
+        batch = db.batch()
+        collection_ref = db.collection('InfoHub')
+        
+        for faq_item in faq_list:
+            doc_ref = collection_ref.document()  # 自動生成 ID
+            batch.set(doc_ref, faq_item)
+        
+        batch.commit()
+        print(f"🎉 成功批量新增 {len(faq_list)} 筆 FAQ 資料")
+    except Exception as e:
+        print(f"❌ 批量新增 FAQ 時發生錯誤: {e}")
 
+# 🔹 從 JSON 檔案載入並新增 FAQ 資料
+def load_and_add_faq(file_path='faq_data.json'):
+    """
+    從 JSON 檔案讀取 FAQ 資料並批次新增到 Firestore
+    
+    Args:
+        file_path (str): JSON 檔案路徑
+    """
+    print(f"📁 開始從 '{file_path}' 載入 FAQ 資料...")
+    faq_data = load_faq_data(file_path)
+    
+    if faq_data:
+        add_faq_batch_transaction(faq_data)
+    else:
+        print("❌ 無法載入 FAQ 資料，請檢查檔案路徑和格式")
 
+# ================================
+# 🔹 使用範例和測試區域
+# ================================
 
-# 🔹 測試新增課程
-new_course = {
-    'course_day': '星期五',
-    'course_department': '資管一', 
-    'course_id': 'D740101483', 
-    'course_count': {'開放總人數': 100, '外系': 20}, 
-    'course_web': 'https://outline.fju.edu.tw/#/outLineSearch/outlineView/714765/0', 
-    'course_credit': 2, 
-    'course_teacher': '許嘉霖', 
-    'course_name.en': 'Marketing Management', 
-    'course_room': 'ES317', 
-    'course_language': '中文', 
-    'course_name.zh': '行銷管理', 
-    'course_type': '選', 
-    'course_time': ['D3', 'D4'], 
-    'course_enable_years': {'最低年級': '一年級', '最高年級': '四年級', '分發優先順序': '開課單位學生優先'}, 
-    'course_semester': '學期'
-}
-
-# 測試新增
-# add_course(new_course)
-
-# 測試查詢課程
-# get_courses()
-
-# 測試篩選條件
-# get_filtered_data("Course", "course_name_zh", "==", "電腦應用")
-
-# 測試更新課程
-# update_course("D740101483", {"course_credit": 3})
-
-# 測試刪除課程
-# delete_course("D740101483")
-
-# 計算集合數量
-# count_documents("Course")
-
-# # 🔥 小心使用！會刪除整個集合的所有文件
-# delete_collection("teachers_vector")
-# delete_collection("courses_vector")
-# delete_collection("rules_vector")
-
+if __name__ == "__main__":
+    # 📝 使用範例：
+    
+    # 1. 從 JSON 檔案載入並新增 FAQ 資料
+    # load_and_add_faq('faq_data.json')
+    
+    # 2. 只讀取 JSON 資料（不新增到資料庫）
+    # faq_data = load_faq_data('faq_data.json')
+    # print(f"讀取到 {len(faq_data)} 筆資料")
+    
+    # 3. 測試查詢課程
+    # get_courses()
+    
+    # 4. 測試篩選條件
+    get_filtered_data("Users", "student_id", "==", "411401516")
+    
+    # 5. 測試更新課程
+    # update_course("D740101483", {"course_credit": 3})
+    
+    # 6. 測試刪除課程
+    # delete_course("D740101483")
+    
+    # 7. 計算集合數量
+    # count_documents("InfoHub")
+    
+    # 8. 🔥 小心使用！會刪除整個集合的所有文件
+    # delete_collection("teachers_vector")
+    # delete_collection("courses_vector")
+    # delete_collection("rules_vector")
+    # delete_collection("InfoHub")
+    
+    pass
 
 # 🔹 記得關閉 Firebase 連線
 # firebase_admin.delete_app(firebase_admin.get_app())
-
-def clone_course_to_clean_by_zh_name(source="CourseClean", target="CourseClean"):
-    try:
-        docs = db.collection(source).stream()
-        copied = 0
-
-        for doc in docs:
-            data = doc.to_dict()
-            cleaned_data = {}
-
-            # 欄位轉換：將 .en/.zh 改為 _en/_zh
-            for key, value in data.items():
-                if key == "course_name.en":
-                    cleaned_data["course_name_en"] = value
-                elif key == "course_name.zh":
-                    cleaned_data["course_name_zh"] = value
-                else:
-                    cleaned_data[key] = value
-
-            # 用中文課程名稱作為 ID
-            zh_name = cleaned_data.get("course_name_zh")
-            if zh_name:
-                db.collection(target).document(zh_name).set(cleaned_data)
-                print(f"✅ 已複製課程：{zh_name}")
-                copied += 1
-            else:
-                print(f"⚠️ 略過沒有 course_name_zh 的課程：{doc.id}")
-
-        print(f"\n🎉 總共成功複製 {copied} 筆課程到集合「{target}」")
-    except Exception as e:
-        print(f"❌ 複製過程發生錯誤：{e}")
-# clone_course_to_clean_by_zh_name()
-
