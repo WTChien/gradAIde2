@@ -124,6 +124,10 @@ export default function Index() {
         message: string;
         account: string;
         token: string;
+        admission_year?: string; // 🆕 學年資訊
+        user_type?: string;      // 🆕 用戶類型
+        department_name?: string; // 🆕 系所名稱
+        study_type?: string;     // 🆕 學制類型
       }>("https://llm.gradaide.xyz/login", {
         account,
         password,
@@ -131,16 +135,38 @@ export default function Index() {
       
       // 🔹 先載入歷史紀錄（若有）
       // await loadHistoryFromServer(response.data.account);
-      // ✅ 儲存登入資訊
+      
+      // ✅ 儲存登入基本資訊
       localStorage.setItem("token", response.data.token);
       localStorage.setItem("account", response.data.account);
-  
+      
+      // 🆕 儲存學年和用戶類型資訊
+      if (response.data.admission_year) {
+        localStorage.setItem("admission_year", response.data.admission_year);
+        console.log("✅ 學年資訊已儲存:", response.data.admission_year);
+      } else {
+        localStorage.removeItem("admission_year");
+        console.log("ℹ️ 非學生用戶，移除學年資訊");
+      }
+      
+      if (response.data.user_type) {
+        localStorage.setItem("user_type", response.data.user_type);
+      }
+      
+      if (response.data.department_name) {
+        localStorage.setItem("department_name", response.data.department_name);
+      }
+      
+      if (response.data.study_type) {
+        localStorage.setItem("study_type", response.data.study_type);
+      }
+      
       alert(response.data.message);
-  router.push("/");
-} catch (error) {
-  const err = error as AxiosError<{ detail?: string }>;
-  alert(err.response?.data?.detail || "登入失敗，請稍後再試");
-}
+      router.push("/");
+    } catch (error) {
+      const err = error as AxiosError<{ detail?: string }>;
+      alert(err.response?.data?.detail || "登入失敗，請稍後再試");
+    }
   };
   
 
