@@ -65,18 +65,18 @@ const data = [
     {
         title: "排課時段選擇",
         content: [
-            "選擇自己想要排課的時，GradAIde 將根據您的需求提供個人化課表建議。",
+            "選擇自己想要排課的時段，GradAIde 將根據您的需求提供個人化課表建議。",
 
         ],
         content1: [
             "Ⅰ.點選對話框左邊的「✚」圖示",
         ],
-        image: "/img/addclass.png",
+        image: "/img/sendbox.png",
         content2: [
             "Ⅱ.出現課表表格，選擇想要系統提供建議的課程時段後，點選確定。",
 
         ],
-        image1: "/img/class.png",
+        image1: "/img/addclass.png",
 
     },
     {
