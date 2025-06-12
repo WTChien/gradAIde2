@@ -292,7 +292,7 @@ def parse_natural_query(query: str) -> Dict[str, Any]:
     
     category_keywords = {
         "人文通識": ["人文", "文學", "哲學", "藝術", "語言", "英文", "中文", "外語"],
-        "自然通識": ["自然", "科學", "數學", "物理", "化學", "生物", "地理", "環境", "天文"],
+        "自然通識": ["自然", "數學", "物理", "化學", "生物", "地理", "環境", "天文"],
         "社會通識": ["社會", "經濟", "政治", "法律", "社會學", "心理", "管理", "商業", "歷史", "古代", "近代", "世界史", "台灣史", "中國史"],
         "體育": ["體育", "運動", "健身", "球類", "游泳", "跑步", "網球", "籃球", "足球", "羽球", "桌球"]
     }
@@ -377,43 +377,43 @@ def format_smart_recommend_to_markdown(review_data: Dict[str, Any]) -> str:
 {review_data.get('message', '沒有找到推薦課程')}
 """
     
-    markdown = f"""# 🧠 智能課程推薦結果
+#     markdown = f"""# 🧠 智能課程推薦結果
 
-## 查詢解析
-- **原始查詢**: "{parsed_query.get('original_query', '未知')}"
-- **解析信心度**: {parsed_query.get('confidence', 0):.2f}
+# ## 查詢解析
+# - **原始查詢**: "{parsed_query.get('original_query', '未知')}"
+# - **解析信心度**: {parsed_query.get('confidence', 0):.2f}
 
-## 推薦條件
-- **分類**: {search_params.get('category', '所有評價')}
-- **排序方式**: {search_params.get('sort_method', '推薦高至低')}
-- **推薦數量**: 5 (固定)
+# ## 推薦條件
+# - **分類**: {search_params.get('category', '所有評價')}
+# - **排序方式**: {search_params.get('sort_method', '推薦高至低')}
+# - **推薦數量**: 5 (固定)
 
-## 推薦統計
-- **課程總數**: {statistics.get('total_reviews', len(data))}
-- **不同課程**: {statistics.get('unique_courses', 0)}
-- **不同教師**: {statistics.get('unique_teachers', 0)}
-- **平均推薦度**: {statistics.get('average_recommendation', 0):.1f}
+# ## 推薦統計
+# - **課程總數**: {statistics.get('total_reviews', len(data))}
+# - **不同課程**: {statistics.get('unique_courses', 0)}
+# - **不同教師**: {statistics.get('unique_teachers', 0)}
+# - **平均推薦度**: {statistics.get('average_recommendation', 0):.1f}
 
-"""
+# """
 
-    confidence = parsed_query.get('confidence', 0)
-    if confidence < 0.5:
-        markdown += f"""
-> ⚠️ **解析信心度較低 ({confidence:.2f})**  
-> 如果結果不符合預期，建議使用更明確的關鍵字，例如：  
-> - "推薦一些自然通識課程"
-> - "有什麼輕鬆的體育課"
-> - "作業少的人文通識課"
+#     confidence = parsed_query.get('confidence', 0)
+#     if confidence < 0.5:
+#         markdown += f"""
+# > ⚠️ **解析信心度較低 ({confidence:.2f})**  
+# > 如果結果不符合預期，建議使用更明確的關鍵字，例如：  
+# > - "推薦一些自然通識課程"
+# > - "有什麼輕鬆的體育課"
+# > - "作業少的人文通識課"
 
-"""
+# """
 
-    if statistics.get('average_course_ratings'):
-        markdown += "### 平均課程評分\n"
-        for rating_type, avg_score in statistics['average_course_ratings'].items():
-            markdown += f"- **{rating_type}**: {avg_score:.1f}星\n"
-        markdown += "\n"
+    # if statistics.get('average_course_ratings'):
+    #     markdown += "### 平均課程評分\n"
+    #     for rating_type, avg_score in statistics['average_course_ratings'].items():
+    #         markdown += f"- **{rating_type}**: {avg_score:.1f}星\n"
+    #     markdown += "\n"
 
-    markdown += "## 🎯 推薦課程列表\n\n"
+    markdown = "## 🎯 推薦課程列表\n\n"
     
     for i, review in enumerate(data, 1):
         markdown += f"### 📚 推薦 {i}\n\n"

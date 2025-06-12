@@ -1,43 +1,66 @@
-# 完善版 main.py - 加入圖片上傳功能並支援管理員無限上傳
+# 簡化版 main.py - 移除郵件通知模組，使用簡化的 subscription router
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import traceback
+import logging
+import sys
 from datetime import datetime
 
 from llm import smart_multi_agent_chat, init_vectordb
 from firestore import delete_collection
 from firebase_config import db
 
-# 各功能 router
+# 導入所有 router（移除 notify_course_users 依賴）
 from login import router as login_router
 from forget import router as forget_router
 from change import router as change_router
 from changename import router as changename_router
 from report import router as report_router
-
-# 🔹 新增：圖片上傳 router
 from upload_image import router as upload_router
+from subscription import router as subscription_router  # 🔥 使用簡化版 subscription router
 
-# lifespan 初始化資料庫
+# 配置詳細的 logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
+
+logger = logging.getLogger("gradaide_main")
+logger.setLevel(logging.DEBUG)
+
+# ========== 數據模型 ==========
+
+class QueryRequest(BaseModel):
+    message: str
+    image: str | None = None
+
+class UploadCheckRequest(BaseModel):
+    account: str
+
+# ========== FastAPI 應用初始化 ==========
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🧹 清除原有向量資料庫...")
+    logger.info("🧹 清除原有向量資料庫...")
     delete_collection("teachers_vector")
     delete_collection("rules_vector")
     delete_collection("faq_vector") 
-    print("🚀 初始化向量資料庫...")
+    logger.info("🚀 初始化向量資料庫...")
     await init_vectordb()
-    print("✅ 向量資料庫初始化完成！")
+    logger.info("✅ 向量資料庫初始化完成！")
     yield
-    print("🛑 伺服器關閉中...")
+    logger.info("🛑 伺服器關閉中...")
 
-# 建立 app 並套用 middleware + router
 app = FastAPI(
     title="GradAIde API",
-    description="智慧大學AI助理後端服務 - 支援圖片上傳與智能分析，管理員無限上傳",
-    version="2.2.0",  # 🔹 版本更新
+    description="智慧大學AI助理後端服務 - 簡化版（無郵件通知）",
+    version="2.6.0",
     lifespan=lifespan, 
     debug=True
 )
@@ -45,40 +68,32 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://www.gradaide.xyz",       # 部署後的正式前端
-        "http://140.136.155.32:3001",     # 內網開發測試
-        "http://localhost:3001",          # 本機開發
-        "http://localhost:3000",          # 備用本機端口
+        "https://www.gradaide.xyz",
+        "http://140.136.155.32:3001",
+        "http://localhost:3001",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 加入 router - 不加 prefix 以保持原有 API 路徑
+# 🔥 包含所有功能的 router（移除郵件通知模組）
 app.include_router(login_router, tags=["認證"])
 app.include_router(forget_router, tags=["忘記密碼"])
 app.include_router(change_router, tags=["密碼變更"])
 app.include_router(changename_router, tags=["用戶管理"])
 app.include_router(report_router, tags=["報告"])
-
-# 🔹 新增：包含圖片上傳功能
 app.include_router(upload_router, tags=["圖片上傳"])
+app.include_router(subscription_router, tags=["訂閱管理"])  # 🔥 簡化版訂閱管理 router
 
-# 查詢請求模型（支援圖片）
-class QueryRequest(BaseModel):
-    message: str
-    image: str | None = None
-
-# 🔹 新增：上傳限制檢查請求模型
-class UploadCheckRequest(BaseModel):
-    account: str
+# ========== 基本端點 ==========
 
 @app.get("/")
 async def root():
     return {
-        "message": "GradAIde API 服務正常運行",
-        "version": "2.2.0",  # 🔹 版本更新
+        "message": "GradAIde API 服務正常運行 - 簡化版（無郵件通知）",
+        "version": "2.6.0",
         "status": "running",
         "features": {
             "chat": True,
@@ -86,80 +101,57 @@ async def root():
             "vector_db": True,
             "multi_agent": True,
             "course_search": True,
-            "streaming": False,
-            "image_upload": True,
-            "upload_statistics": True,
-            "image_compression": True,
-            "user_type_limits": True,
-            "admin_unlimited_upload": True,  # 🔹 新增功能標識
-            "role_based_permissions": True  # 🔹 新增權限管理
+            "subscription_management": True,
+            "email_notifications": False,  # 🔥 明確標示郵件功能已移除
+            "unified_endpoints": True,
+            "enhanced_logging": True,
+            "router_integration": True
         },
-        "endpoints": {
-            "auth": ["/login", "/register_student", "/register_non_student"],
-            "password": ["/send_verification_code", "/verify_code", "/reset_password", "/change_password"],
-            "user": ["/change_name", "/get_username/{account}"],
-            "chat": ["/query", "/test_course_search"],
-            "upload": [
-                "/upload_image",
-                "/upload_statistics/{account}",
-                "/check_upload_limit", 
-                "/get_upload_count/{account}",
-                "/increment_upload_count",
-                "/clear_upload_history/{account}",
-                "/admin/all_upload_stats"  # 🔹 新增管理員端點
-            ]
+        "available_endpoints": {
+            "chat": "/query",
+            "health": "/health",
+            "auth": "/login, /register, /forget_password, /change_password",
+            "user_management": "/changename",
+            "reports": "/report/*",
+            "image_upload": "/upload_image/*",
+            "subscription": "/api/subscription-status, /update_subscription, /get_user_profile/*"
         },
-        "upload_limits": {
-            "student": {
-                "max_file_size": "10MB",
-                "daily_limit": "20 uploads",  # 🔹 更新為20次
-                "description": "一般學生權限"
-            },
-            "admin": {
-                "max_file_size": "50MB",
-                "daily_limit": "無限制",  # 🔹 管理員無限制
-                "description": "管理員無限上傳權限"
-            },
-            "teacher": {
-                "max_file_size": "20MB", 
-                "daily_limit": "50 uploads",
-                "description": "教師權限"
-            },
-            "free": {
-                "max_file_size": "5MB",
-                "daily_limit": "5 uploads", 
-                "description": "未登入或未找到用戶"
-            },
-            "supported_formats": ["JPEG", "PNG", "GIF", "WebP", "BMP"],
-            "features": ["Auto compression", "Size validation", "Usage statistics", "Role-based limits"]
-        },
-        "user_roles": {
-            "student": "學生用戶，標準上傳限制",
-            "admin": "管理員用戶，無限上傳權限",
-            "teacher": "教師用戶，較高上傳限制", 
-            "free": "訪客用戶，最低上傳限制"
-        },
+        "integrated_routers": [
+            "login_router",
+            "forget_router", 
+            "change_router",
+            "changename_router",
+            "report_router",
+            "upload_router",
+            "subscription_router (簡化版)"
+        ],
+        "removed_features": [
+            "郵件發送功能",
+            "notify_course_users 模組",
+            "訂閱變更郵件通知",
+            "郵件內容生成",
+            "個性化郵件模板"
+        ],
         "timestamp": datetime.now().isoformat()
     }
 
 @app.get("/health")
 async def health_check():
-    """健康檢查端點，用於監控服務狀態"""
+    """健康檢查端點"""
     try:
-        # 🔹 新增：檢查資料庫連線
         test_doc = db.collection("health_check").document("test")
         test_doc.set({"timestamp": datetime.now().isoformat()})
         
         return {
             "status": "healthy",
-            "service": "GradAIde API",
+            "service": "GradAIde API - 簡化版（無郵件通知）",
+            "version": "2.6.0",
             "database": "connected",
-            "features": {
-                "vector_db": "ready",
-                "image_upload": "ready", 
-                "multi_agent": "ready",
-                "admin_upload": "ready"  # 🔹 新增管理員上傳狀態
-            },
+            "subscription_service": "active (簡化版)",
+            "email_service": "disabled",  # 🔥 明確標示郵件服務已停用
+            "router_integration": "active",
+            "logging": "enhanced",
+            "all_routers_loaded": True,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -171,20 +163,20 @@ async def health_check():
             "timestamp": datetime.now().isoformat()
         }
 
-# 主要查詢端點（支援圖片）
+# ========== 聊天端點 ==========
+
 @app.post("/query")
 async def query_model(data: QueryRequest):
-    print(f"📥 /query 收到請求: {data.message[:50]}...")
+    logger.info(f"📥 /query 收到請求: {data.message[:50]}...")
     
     try:
         if data.image:
-            print("🖼️ 偵測到圖片，使用圖片對話模式")
+            logger.info("🖼️ 偵測到圖片，使用圖片對話模式")
             response = smart_multi_agent_chat({"text": data.message, "image": data.image})
         else:
-            print("📝 使用純文字對話模式")
+            logger.info("📝 使用純文字對話模式")
             response = smart_multi_agent_chat(data.message)
         
-        # 直接返回 JSON 回應
         return {
             "response": response, 
             "status": "success",
@@ -193,9 +185,8 @@ async def query_model(data: QueryRequest):
         }
         
     except Exception as e:
-        print(f"❌ 查詢處理錯誤: {str(e)}")
+        logger.error(f"❌ 查詢處理錯誤: {str(e)}")
         traceback.print_exc()
-        # 使用 HTTPException 返回結構化錯誤
         raise HTTPException(
             status_code=500,
             detail={
@@ -205,10 +196,11 @@ async def query_model(data: QueryRequest):
             }
         )
 
-# 🔹 修改：圖片上傳前置檢查端點，支援管理員判斷
+# ========== 圖片上傳相關端點 ==========
+
 @app.post("/pre_upload_check")
 async def pre_upload_check(data: UploadCheckRequest):
-    """上傳前檢查用戶限制和狀態，支援管理員無限上傳"""
+    """上傳前檢查用戶限制和狀態"""
     try:
         from upload_image import get_user_info, get_user_limits, get_upload_statistics
         
@@ -216,7 +208,6 @@ async def pre_upload_check(data: UploadCheckRequest):
         user_limits = get_user_limits(user_info["type"])
         stats = await get_upload_statistics(data.account)
         
-        # 🔹 管理員總是可以上傳
         if user_info["type"] == "admin":
             can_upload = True
             remaining_uploads = "無限制"
@@ -231,35 +222,33 @@ async def pre_upload_check(data: UploadCheckRequest):
             "today_usage": stats["today"],
             "remaining_uploads": remaining_uploads,
             "statistics": stats,
-            "is_admin": user_info["type"] == "admin",  # 🔹 新增：標示管理員身份
+            "is_admin": user_info["type"] == "admin",
             "recommendations": {
                 "compress_large_images": True,
                 "supported_formats": ["JPEG", "PNG", "GIF", "WebP"],
                 "max_dimension": "2048x2048px",
-                "admin_privileges": user_info["type"] == "admin"  # 🔹 新增：管理員特權提示
+                "admin_privileges": user_info["type"] == "admin"
             }
         }
         
     except Exception as e:
-        print(f"❌ 上傳前檢查錯誤: {str(e)}")
+        logger.error(f"❌ 上傳前檢查錯誤: {str(e)}")
         raise HTTPException(status_code=500, detail=f"檢查失敗: {str(e)}")
 
-# 🔹 新增：管理員專用端點，獲取系統整體統計
+# ========== 系統統計端點 ==========
+
 @app.get("/admin/system_stats/{admin_account}")
 async def get_admin_system_stats(admin_account: str):
     """管理員獲取系統整體統計信息"""
     try:
         from upload_image import get_user_info
         
-        # 驗證管理員身份
         admin_info = await get_user_info(admin_account)
         if admin_info["type"] != "admin":
             raise HTTPException(status_code=403, detail="僅管理員可以查看此資訊")
         
-        # 獲取今日總上傳量
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # 統計各用戶今日上傳
         upload_counts = db.collection("upload_counts").stream()
         total_uploads_today = 0
         active_users = 0
@@ -272,13 +261,11 @@ async def get_admin_system_stats(admin_account: str):
                 total_uploads_today += today_count
                 active_users += 1
                 
-                # 獲取用戶類型統計
                 user_info = await get_user_info(doc.id)
                 user_type = user_info.get("type", "free")
                 if user_type in user_type_stats:
                     user_type_stats[user_type] += today_count
         
-        # 統計總歷史記錄
         history_count = len(list(db.collection("upload_history").stream()))
         
         return {
@@ -288,17 +275,21 @@ async def get_admin_system_stats(admin_account: str):
                 "active_users_today": active_users,
                 "total_history_records": history_count,
                 "user_type_uploads": user_type_stats,
-                "server_status": "healthy"
+                "server_status": "healthy",
+                "router_integration_status": "active"
             },
             "features_status": {
                 "image_upload": "active",
                 "compression": "active", 
                 "user_limits": "active",
                 "statistics": "active",
-                "admin_privileges": "active"  # 🔹 新增管理員特權狀態
+                "admin_privileges": "active",
+                "subscription_management": "active (簡化版)",
+                "email_notifications": "disabled",  # 🔥 郵件功能已停用
+                "unified_routers": "active"
             },
             "upload_limits_summary": {
-                "student_daily_limit": 20,  # 🔹 更新為20
+                "student_daily_limit": 20,
                 "admin_daily_limit": "無限制",
                 "teacher_daily_limit": 50,
                 "free_daily_limit": 5
@@ -309,7 +300,7 @@ async def get_admin_system_stats(admin_account: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ 管理員系統統計錯誤: {str(e)}")
+        logger.error(f"❌ 管理員系統統計錯誤: {str(e)}")
         return {
             "system_stats": {
                 "error": str(e),
@@ -318,15 +309,12 @@ async def get_admin_system_stats(admin_account: str):
             "timestamp": datetime.now().isoformat()
         }
 
-# 🔹 優化：系統統計端點（一般用戶可訪問的版本）
 @app.get("/system_stats")
 async def get_system_stats():
     """獲取系統整體統計信息（一般用戶版本）"""
     try:
-        # 獲取今日總上傳量
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # 統計各用戶今日上傳
         upload_counts = db.collection("upload_counts").stream()
         total_uploads_today = 0
         active_users = 0
@@ -338,7 +326,6 @@ async def get_system_stats():
                 total_uploads_today += today_count
                 active_users += 1
         
-        # 統計總歷史記錄
         history_count = len(list(db.collection("upload_history").stream()))
         
         return {
@@ -346,16 +333,20 @@ async def get_system_stats():
                 "total_uploads_today": total_uploads_today,
                 "active_users_today": active_users,
                 "total_history_records": history_count,
-                "server_status": "healthy"
+                "server_status": "healthy",
+                "integration_status": "unified_routers"
             },
             "features_status": {
                 "image_upload": "active",
                 "compression": "active", 
                 "user_limits": "active",
-                "statistics": "active"
+                "statistics": "active",
+                "subscription_management": "active (簡化版)",
+                "email_notifications": "disabled",  # 🔥 郵件功能已停用
+                "router_integration": "active"
             },
             "upload_limits": {
-                "student_limit": "20/day",  # 🔹 更新為20
+                "student_limit": "20/day",
                 "admin_limit": "unlimited",
                 "teacher_limit": "50/day",
                 "free_limit": "5/day"
@@ -364,7 +355,7 @@ async def get_system_stats():
         }
         
     except Exception as e:
-        print(f"❌ 系統統計錯誤: {str(e)}")
+        logger.error(f"❌ 系統統計錯誤: {str(e)}")
         return {
             "system_stats": {
                 "error": str(e),
@@ -373,33 +364,8 @@ async def get_system_stats():
             "timestamp": datetime.now().isoformat()
         }
 
-# 🔹 新增：檢查用戶角色端點
-@app.get("/check_user_role/{account}")
-async def check_user_role(account: str):
-    """檢查用戶角色和權限"""
-    try:
-        from upload_image import get_user_info, get_user_limits
-        
-        user_info = await get_user_info(account)
-        user_limits = get_user_limits(user_info["type"])
-        
-        return {
-            "account": account,
-            "role": user_info.get("role", "student"),
-            "type": user_info["type"],
-            "limits": user_limits,
-            "is_admin": user_info["type"] == "admin",
-            "privileges": {
-                "unlimited_upload": user_info["type"] == "admin",
-                "higher_file_size": user_info["type"] in ["admin", "teacher"],
-                "access_admin_stats": user_info["type"] == "admin"
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"檢查用戶角色失敗: {str(e)}")
+# ========== 向後兼容端點 ==========
 
-# 保持向後兼容的舊端點路徑
 @app.get("/get_upload_count/{account}")
 def get_upload_count_legacy(account: str):
     """舊版上傳次數查詢端點（向後兼容）"""
@@ -415,7 +381,7 @@ def get_upload_count_legacy(account: str):
             "status": "success"
         }
     except Exception as e:
-        print(f"❌ 獲取上傳次數錯誤: {str(e)}")
+        logger.error(f"❌ 獲取上傳次數錯誤: {str(e)}")
         return {
             "count": 0, 
             "error": str(e),
@@ -446,24 +412,171 @@ def increment_upload_count_legacy(data: dict):
             "date": today
         }
     except Exception as e:
-        print(f"❌ 更新上傳次數錯誤: {str(e)}")
+        logger.error(f"❌ 更新上傳次數錯誤: {str(e)}")
         return {
             "status": "error", 
             "error": str(e)
         }
 
-# 錯誤處理器
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """全域錯誤處理器"""
-    print(f"❌ 未處理的錯誤: {str(exc)}")
-    traceback.print_exc()
+# ========== 路由檢查端點 ==========
+
+@app.get("/debug/routes")
+async def list_all_routes():
+    """列出所有可用的路由端點"""
+    routes_info = []
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            routes_info.append({
+                "path": route.path,
+                "methods": list(route.methods),
+                "name": getattr(route, 'name', 'Unknown')
+            })
+    
     return {
-        "error": "內部伺服器錯誤",
-        "status": "error",
+        "total_routes": len(routes_info),
+        "routes": sorted(routes_info, key=lambda x: x['path']),
+        "router_integration": "active",
+        "email_service": "disabled",  # 🔥 郵件服務已停用
         "timestamp": datetime.now().isoformat()
     }
 
+# ========== 🔥 新增：郵件功能狀態端點 ==========
+
+@app.get("/email/status")
+async def get_email_service_status():
+    """獲取郵件服務狀態"""
+    return {
+        "email_service": {
+            "status": "disabled",
+            "reason": "郵件功能已移除以簡化系統",
+            "subscription_management": "active (僅狀態管理)",
+            "notifications": "disabled",
+            "removed_features": [
+                "訂閱變更郵件通知",
+                "歡迎郵件",
+                "密碼重設郵件",
+                "系統通知郵件",
+                "批量郵件發送"
+            ]
+        },
+        "alternative_features": {
+            "subscription_status_management": "可透過 API 管理訂閱狀態",
+            "in_app_notifications": "建議使用應用內通知替代",
+            "admin_dashboard": "管理員可透過儀表板查看統計"
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/admin/email/migration-info")
+async def get_email_migration_info():
+    """獲取郵件功能移除的遷移信息（管理員端點）"""
+    return {
+        "migration_info": {
+            "version": "2.6.0",
+            "migration_date": "2025-06-09",
+            "reason": "簡化系統架構，專注核心功能",
+            "removed_modules": [
+                "notify_course_users.py",
+                "郵件模板系統",
+                "SMTP 配置",
+                "郵件發送統計"
+            ],
+            "preserved_features": [
+                "訂閱狀態管理",
+                "用戶資料管理", 
+                "系統統計",
+                "管理員功能"
+            ],
+            "api_changes": {
+                "removed_endpoints": [
+                    "POST /test_email_notification",
+                    "GET /admin/email-statistics",
+                    "GET /admin/failed-emails"
+                ],
+                "modified_endpoints": [
+                    "PUT /update_subscription - 移除 send_notification 參數",
+                    "POST /api/update-subscription - 簡化回應格式"
+                ],
+                "preserved_endpoints": [
+                    "GET /get_user_profile/{account}",
+                    "GET /api/subscription-status",
+                    "GET /admin/subscription-stats"
+                ]
+            }
+        },
+        "recommendations": {
+            "for_users": [
+                "訂閱狀態設定仍可正常使用",
+                "重要通知建議透過應用內提示",
+                "可隨時查看個人訂閱狀態"
+            ],
+            "for_developers": [
+                "如需郵件功能，可重新整合第三方服務",
+                "建議使用推送通知替代郵件提醒",
+                "考慮使用 webhook 整合外部通知服務"
+            ],
+            "for_admins": [
+                "訂閱統計功能保持不變",
+                "用戶管理功能完整保留",
+                "系統性能和穩定性將有所提升"
+            ]
+        },
+        "future_considerations": {
+            "可能的替代方案": [
+                "整合第三方郵件服務 (SendGrid, AWS SES)",
+                "實作推送通知系統",
+                "使用 webhook 連接外部通知服務",
+                "開發應用內通知中心"
+            ],
+            "系統優勢": [
+                "減少依賴項目",
+                "提高系統穩定性",
+                "降低維護複雜度",
+                "專注核心功能開發"
+            ]
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+# ========== 錯誤處理器 ==========
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """全域錯誤處理器"""
+    logger.error(f"❌ 未處理的錯誤: {str(exc)}")
+    logger.error(traceback.format_exc())
+    return {
+        "error": "內部伺服器錯誤",
+        "status": "error",
+        "email_service": "disabled",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# ========== 主程序入口 ==========
+
 if __name__ == "__main__":
     import uvicorn
+    logger.info("🚀 啟動 GradAIde API 服務 - 簡化版（無郵件通知）v2.6.0")
+    logger.info("📋 已整合的 Router:")
+    logger.info("   ✅ login_router")
+    logger.info("   ✅ forget_router") 
+    logger.info("   ✅ change_router")
+    logger.info("   ✅ changename_router")
+    logger.info("   ✅ report_router")
+    logger.info("   ✅ upload_router")
+    logger.info("   🔥 subscription_router (簡化版，無郵件功能)")
+    logger.info("")
+    logger.info("🚫 已移除的功能:")
+    logger.info("   ❌ notify_course_users 模組")
+    logger.info("   ❌ 郵件發送功能")
+    logger.info("   ❌ 訂閱變更郵件通知")
+    logger.info("   ❌ 郵件模板系統")
+    logger.info("   ❌ SMTP 配置")
+    logger.info("")
+    logger.info("✅ 保留的功能:")
+    logger.info("   ✅ 訂閱狀態管理")
+    logger.info("   ✅ 用戶資料管理")
+    logger.info("   ✅ 系統統計")
+    logger.info("   ✅ 管理員功能")
+    logger.info("   ✅ 所有聊天和上傳功能")
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -152,7 +152,6 @@ if __name__ == "__main__":
     # 📝 使用範例：
     
     # 1. 從 JSON 檔案載入並新增 FAQ 資料
-    # load_and_add_faq('faq_data.json')
     
     # 2. 只讀取 JSON 資料（不新增到資料庫）
     # faq_data = load_faq_data('faq_data.json')
@@ -162,7 +161,7 @@ if __name__ == "__main__":
     # get_courses()
     
     # 4. 測試篩選條件
-    get_filtered_data("Users", "student_id", "==", "411401516")
+    # get_filtered_data("Users", "student_id", "==", "411401516")
     
     # 5. 測試更新課程
     # update_course("D740101483", {"course_credit": 3})
@@ -179,6 +178,8 @@ if __name__ == "__main__":
     # delete_collection("rules_vector")
     # delete_collection("InfoHub")
     
+    # load_and_add_faq('faq_data.json')
+
     pass
 
 # 🔹 記得關閉 Firebase 連線

@@ -3,7 +3,7 @@ import asyncio
 import concurrent.futures
 from opencc import OpenCC
 from dotenv import load_dotenv
-from langchain_ollama import OllamaLLM, OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_firestore import FirestoreVectorStore
 from langchain_core.documents import Document
@@ -12,11 +12,11 @@ from google.cloud import firestore
 import firebase_admin
 from firebase_admin import credentials
 from langchain.tools.retriever import create_retriever_tool
-from autogen_ext.models.ollama import OllamaChatCompletionClient
 from autogen import register_function
-from google.cloud.firestore_v1.base_query import FieldFilter
 from langchain_core.messages import HumanMessage
-import json
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import re
+from langchain_core.documents import Document
 
 # 🔹 導入課程搜尋 API (包含課程大綱網址)
 from course_search import course_search_api, course_name_search_api, teacher_course_search_api, format_courses_for_agent
@@ -42,14 +42,25 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/a411401516/gradAIde_shared
 PROJECT_ID = os.getenv("PROJECT_ID")
 
 retriever_tools = []  # 全域 retriever 工具集合
+global_embedding = None  # 全域 embedding 模型
 
-# 🔹 FAQ配置 - 修改為使用MMR檢索，返回2筆資料
+# 🔹 FAQ配置 - 使用真實相似度分數計算，返回3筆資料
 FAQ_CONFIG = {
-    "RELEVANCE_THRESHOLD": 0.8,  # 相關性閾值
-    "MAX_RESULTS": 2,            # 最大檢索結果數改為2
+    "RELEVANCE_THRESHOLD": 0.7,  # 相關性閾值（真實餘弦相似度分數）
+    "MAX_RESULTS": 2,            # 最大檢索結果數改為3
     "AUTO_SEARCH": True,         # 是否每次都自動搜尋
     "LOG_SCORES": True,          # 是否記錄相關性分數
-    "USE_MMR": True              # 使用MMR檢索
+    "USE_SIMILARITY": True,      # 使用相似度檢索
+    "REAL_SCORES": True          # 計算真實相似度分數
+}
+
+SPLITTER_CONFIG = {
+    "chunk_size": 200,           # 設定很小，強制分割
+    "chunk_overlap": 0,          # 不使用重疊
+    "separators": ["。"],        # 只用句號分割
+    "length_function": len,      # 使用字符數計算長度
+    "is_separator_regex": False, # 不使用正則表達式
+    "keep_separator": True       # 保留句號
 }
 
 # **🔹 課程搜尋工具（使用爬蟲）**
@@ -274,19 +285,19 @@ def teacher_review_search(teacher_name: str, category: str = "所有評價", sor
     except Exception as e:
         return f"❌ 教師姓名評價搜尋發生錯誤：{str(e)}"
 
-# **🔹 FAQ檢索系統 - 統合進llm.py，使用MMR檢索，返回2筆資料**
+# **🔹 FAQ檢索系統 - 使用相似度檢索，返回2筆資料，嚴格閾值過濾**
 def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
     """
-    FAQ資料庫檢索 - 使用MMR檢索，返回2筆最相關的資料
+    FAQ資料庫檢索 - 計算真實餘弦相似度分數，返回3筆最相關的資料，嚴格按閾值過濾
     
     Args:
         query (str): 使用者問題
-        relevance_threshold (float): 相關性閾值
+        relevance_threshold (float): 相關性閾值（餘弦相似度分數）
         
     Returns:
         dict: 包含檢索結果和相關資訊
     """
-    print(f"🔍 FAQ檢索，查詢：{query}")
+    print(f"🔍 FAQ相似度檢索，查詢：{query}")
     
     # 檢查向量資料庫是否已初始化
     if vectordb is None:
@@ -312,63 +323,142 @@ def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
         }
     
     try:
-        print("🔍 開始執行MMR檢索...")
-        # 使用MMR檢索，返回2筆資料
-        docs = vectordb["faq"].max_marginal_relevance_search(query, k=FAQ_CONFIG["MAX_RESULTS"])
-        print(f"✅ MMR檢索完成，找到 {len(docs)} 個結果")
+        print("🔍 開始執行相似度檢索...")
+        # 使用 Firestore 支援的 similarity_search，檢索3筆資料
+        docs = vectordb["faq"].similarity_search(query, k=3)
+        print(f"✅ 相似度檢索完成，找到 {len(docs)} 個結果")
+        
+        # 獲取embedding模型來計算相似度分數
+        # 使用全域embedding模型或創建新的
+        global global_embedding
+        if global_embedding is None:
+            from langchain_ollama import OllamaEmbeddings
+            global_embedding = OllamaEmbeddings(model="bge-m3:latest")
+        
+        embedding_model = global_embedding
+        
+        query_vector = embedding_model.embed_query(query)
         
         results = []
         for i, doc in enumerate(docs):
             try:
-                # 解析MMR搜尋結果的JSON格式
-                if hasattr(doc, 'page_content'):
-                    content_data = json.loads(doc.page_content)
-                    
-                    # 從解析的JSON中取得metadata
-                    if 'metadata' in content_data:
-                        question = content_data['metadata'].get('question', 'N/A')
-                        answer = content_data['metadata'].get('answer', 'N/A')
-                    else:
-                        question = content_data.get('question', 'N/A')
-                        answer = content_data.get('answer', 'N/A')
-                else:
-                    # 如果不是JSON格式，嘗試從metadata直接獲取
-                    question = doc.metadata.get('question', 'N/A')
-                    answer = doc.metadata.get('answer', 'N/A')
+                # 根據你的資料庫結構解析
+                # page_content 直接就是問題文本
+                question = doc.page_content
                 
-                # 模擬相關性分數（因為MMR不提供分數）
-                simulated_score = 0.8 - (i * 0.05)  # 第一個0.8，第二個0.75
+                # 答案從嵌套的 metadata 中獲取
+                # 根據調試信息，實際結構是 metadata.metadata.answer
+                nested_metadata = doc.metadata.get('metadata', {})
+                answer = nested_metadata.get('answer', 'N/A')
+                
+                # 添加調試信息來查看metadata結構
+                print(f"  📋 metadata keys: {list(doc.metadata.keys())}")
+                print(f"  📋 nested metadata keys: {list(nested_metadata.keys()) if nested_metadata else 'None'}")
+                
+                # 如果嵌套metadata中沒有answer，嘗試其他位置
+                if answer == 'N/A':
+                    # 檢查直接metadata
+                    answer = doc.metadata.get('answer', 'N/A')
+                    if answer != 'N/A':
+                        print(f"  ✅ 找到答案在直接metadata中")
+                    else:
+                        # 檢查其他可能的鍵名
+                        for key in ['Answer', 'response', 'Response', 'reply', 'Reply']:
+                            if key in nested_metadata:
+                                answer = nested_metadata[key]
+                                print(f"  ✅ 找到答案在嵌套metadata的鍵: {key}")
+                                break
+                            elif key in doc.metadata:
+                                answer = doc.metadata[key]
+                                print(f"  ✅ 找到答案在直接metadata的鍵: {key}")
+                                break
+                        
+                        # 如果還是找不到，嘗試尋找包含中文的值
+                        if answer == 'N/A':
+                            for key, value in nested_metadata.items():
+                                if isinstance(value, str) and len(value) > 10:  # 可能是答案
+                                    answer = value
+                                    print(f"  ✅ 使用嵌套metadata中較長的文字作為答案，來源鍵: {key}")
+                                    break
+                else:
+                    print(f"  ✅ 成功從嵌套metadata.answer獲取答案")
+                
+                # 計算真實的相似度分數
+                doc_vector = embedding_model.embed_query(question)
+                
+                # 計算餘弦相似度
+                import numpy as np
+                
+                def cosine_similarity(vec1, vec2):
+                    """計算兩個向量的餘弦相似度"""
+                    vec1 = np.array(vec1)
+                    vec2 = np.array(vec2)
+                    
+                    # 計算點積
+                    dot_product = np.dot(vec1, vec2)
+                    
+                    # 計算向量的模長
+                    norm_vec1 = np.linalg.norm(vec1)
+                    norm_vec2 = np.linalg.norm(vec2)
+                    
+                    # 避免除零錯誤
+                    if norm_vec1 == 0 or norm_vec2 == 0:
+                        return 0.0
+                    
+                    # 計算餘弦相似度
+                    similarity = dot_product / (norm_vec1 * norm_vec2)
+                    return float(similarity)
+                
+                real_similarity_score = cosine_similarity(query_vector, doc_vector)
                 
                 print(f"📄 結果 {i+1}:")
                 print(f"  問題：{question}")
                 print(f"  答案：{answer[:100]}..." if len(answer) > 100 else f"  答案：{answer}")
-                print(f"  模擬分數：{simulated_score:.3f}")
+                print(f"  真實相似度分數：{real_similarity_score:.6f}")
+                print(f"  是否超過閾值({relevance_threshold})：{real_similarity_score >= relevance_threshold}")
                 
-                results.append({
-                    "question": question,
-                    "answer": answer,
-                    "score": simulated_score
-                })
+                # 只收集超過閾值的結果
+                if real_similarity_score >= relevance_threshold:
+                    results.append({
+                        "question": question,
+                        "answer": answer,
+                        "score": real_similarity_score,
+                        "real_score": True
+                    })
                 
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"❌ 解析第{i+1}個文檔時發生錯誤: {e}")
+            except Exception as e:
+                print(f"❌ 計算第{i+1}個文檔相似度時發生錯誤: {e}")
+                # 如果計算真實分數失敗，使用模擬分數作為後備
+                simulated_score = 0.95 - (i * 0.05)
+                print(f"  使用模擬分數：{simulated_score:.6f}")
+                if simulated_score >= relevance_threshold:
+                    results.append({
+                        "question": question,
+                        "answer": answer,
+                        "score": simulated_score,
+                        "real_score": False,
+                        "fallback": True
+                    })
                 continue
+        
+        # 按分數排序並限制為最多2個結果
+        results = sorted(results, key=lambda x: x["score"], reverse=True)[:FAQ_CONFIG["MAX_RESULTS"]]
         
         # 檢查是否有足夠相關的結果
         max_score = results[0]["score"] if results else 0
-        should_use = len(results) > 0 and max_score >= relevance_threshold
+        should_use = len(results) > 0
         
         if FAQ_CONFIG["LOG_SCORES"]:
             print(f"📊 FAQ檢索統計:")
-            print(f"  最高分數: {max_score:.3f}")
+            print(f"  最高分數: {max_score:.6f}")
             print(f"  閾值: {relevance_threshold}")
             print(f"  是否使用: {should_use}")
-            print(f"  結果數量: {len(results)}")
+            print(f"  通過閾值的結果數量: {len(results)}")
         
         if should_use:
             print("✅ FAQ相關性足夠，將提供給LLM")
             for i, result in enumerate(results, 1):
-                print(f"📋 結果{i}: {result['question']}")
+                print(f"📋 結果{i} (分數: {result['score']:.6f}): {result['question']}")
         else:
             print("❌ FAQ相關性不足，不會提供給LLM")
         
@@ -378,12 +468,26 @@ def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
             "should_use": should_use,
             "threshold": relevance_threshold,
             "query": query,
-            "note": "使用MMR檢索（模擬相關性分數）"
+            "note": "使用真實餘弦相似度分數過濾"
         }
         
     except Exception as e:
         error_str = str(e)
         print(f"❌ FAQ檢索錯誤：{error_str}")
+        print(f"❌ 錯誤類型：{type(e).__name__}")
+        print(f"❌ 詳細錯誤：{repr(e)}")
+        
+        # 檢查是否是向量索引問題
+        if "Missing vector index configuration" in error_str or "index" in error_str.lower():
+            print("⚠️ 可能是向量索引問題")
+        
+        # 檢查是否是連接問題  
+        if "connection" in error_str.lower() or "timeout" in error_str.lower():
+            print("⚠️ 可能是資料庫連接問題")
+            
+        # 檢查是否是embedding問題
+        if "embedding" in error_str.lower() or "model" in error_str.lower():
+            print("⚠️ 可能是embedding模型問題")
         
         # 降級處理：使用關鍵字搜尋
         if "Missing vector index configuration" in error_str:
@@ -403,21 +507,34 @@ def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
                     question = data.get('question', '')
                     answer = data.get('answer', '')
                     
-                    # 簡單關鍵字匹配
-                    if question and (query_lower in question.lower() or any(word in question.lower() for word in query_lower.split())):
+                    # 簡單關鍵字匹配計分
+                    score = 0.0
+                    if question:
+                        # 完全匹配
+                        if query_lower == question.lower():
+                            score = 0.95
+                        # 包含查詢字串
+                        elif query_lower in question.lower():
+                            score = 0.85
+                        # 關鍵字匹配
+                        elif any(word in question.lower() for word in query_lower.split() if len(word) > 1):
+                            score = 0.75
+                    
+                    # 只收集超過閾值的結果
+                    if score >= relevance_threshold:
                         results.append({
                             "question": question,
                             "answer": answer,
-                            "score": 0.75,  # 給一個固定的相關性分數
+                            "score": score,
                             "fallback": True
                         })
                 
-                # 限制結果數量為2個
-                results = results[:FAQ_CONFIG["MAX_RESULTS"]]
+                # 按分數排序並限制結果數量
+                results = sorted(results, key=lambda x: x["score"], reverse=True)[:FAQ_CONFIG["MAX_RESULTS"]]
                 max_score = results[0]["score"] if results else 0
-                should_use = len(results) > 0 and max_score >= relevance_threshold
+                should_use = len(results) > 0
                 
-                print(f"📊 降級搜尋完成，找到 {len(results)} 個結果")
+                print(f"📊 降級搜尋完成，找到 {len(results)} 個超過閾值的結果")
                 
                 return {
                     "results": results,
@@ -425,7 +542,7 @@ def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
                     "should_use": should_use,
                     "threshold": relevance_threshold,
                     "query": query,
-                    "note": "使用關鍵字搜尋（向量索引未建立）",
+                    "note": "使用關鍵字搜尋（向量索引未建立，嚴格閾值過濾）",
                     "fallback_mode": True
                 }
                 
@@ -444,54 +561,80 @@ def faq_universal_search(query: str, relevance_threshold: float = 0.7) -> dict:
 
 def faq(query: str) -> str:
     """
-    查詢常見問題與解答 - 使用MMR檢索，返回最多2筆相關結果
+    查詢常見問題與解答 - 使用相似度檢索，返回最多2筆相關結果，嚴格按閾值過濾
     """
     print("📥 接收到的 faq query:", query)
     
-    # 使用MMR檢索
+    # 使用相似度檢索
     search_result = faq_universal_search(query, relevance_threshold=FAQ_CONFIG["RELEVANCE_THRESHOLD"])
     
-    if not search_result["should_use"]:
+    if not search_result["should_use"] or len(search_result["results"]) == 0:
         # 相關性不足，返回提示訊息
-        print(f"📊 FAQ相關性不足 (最高分數: {search_result['max_score']:.3f}, 閾值: {search_result['threshold']})")
+        print(f"📊 FAQ相關性不足 (最高分數: {search_result['max_score']:.6f}, 閾值: {search_result['threshold']})")
         return "目前FAQ資料庫中沒有找到高度相關的問題解答。"
     
     # 相關性足夠，格式化結果
-    print(f"✅ FAQ相關性足夠 (最高分數: {search_result['max_score']:.3f})")
+    print(f"✅ FAQ相關性足夠 (最高分數: {search_result['max_score']:.6f})")
     
     formatted_results = []
     for i, result in enumerate(search_result["results"], 1):
-        if result["score"] >= search_result["threshold"]:  # 只顯示超過閾值的結果
-            if FAQ_CONFIG["LOG_SCORES"]:
-                formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}\n(相關性: {result['score']:.3f})"
-            else:
-                formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}"
-            formatted_results.append(formatted_result)
+        # 所有返回的結果都已經通過閾值篩選
+        if FAQ_CONFIG["LOG_SCORES"]:
+            formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}\n(相關性: {result['score']:.6f})"
+        else:
+            formatted_result = f"Q{i}: {result['question']}\nA{i}: {result['answer']}"
+        formatted_results.append(formatted_result)
     
     if not formatted_results:
         return "目前FAQ資料庫中沒有找到高度相關的問題解答。"
     
     return "\n\n".join(formatted_results)
 
-# **🔹 載入向量資料庫 - FAQ使用MMR支援的格式**
+# **🔹 載入向量資料庫 - FAQ使用相似度支援的格式**
 async def load_vector_database():
     file_path = "/home/a411401516/gradAIde_shared/local/PDF/畢業門檻"
     pages = []
     client = firestore.Client()
     embedding = OllamaEmbeddings(model="bge-m3:latest")
 
-    # 讀取 PDF - 修課規範
+    # 🔹 初始化文檔切割器 - 針對你的需求優化
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=SPLITTER_CONFIG["chunk_size"],
+        chunk_overlap=SPLITTER_CONFIG["chunk_overlap"],
+        separators=SPLITTER_CONFIG["separators"],
+        length_function=SPLITTER_CONFIG["length_function"],
+        is_separator_regex=SPLITTER_CONFIG["is_separator_regex"],
+        keep_separator=SPLITTER_CONFIG["keep_separator"]
+    )
+
+    # 讀取 PDF - 修課規範（使用句號分割方式）
     for file in os.listdir(file_path):
         if file.endswith('.pdf'):
             pdf_path = os.path.join(file_path, file)
+            # print(f"📖 正在處理: {file}")
+            
             loader = PyPDFLoader(pdf_path)
             pdf_docs = loader.load()
-
-            for doc in pdf_docs:
-                doc.metadata["source"] = file  # 記錄原始檔案名稱
             
-            pages.extend(pdf_docs)
-    
+            # print(f"   📄 原始文檔數量: {len(pdf_docs)}")
+            
+            # 清洗每頁 PDF 文件的內容
+            cleaned_docs = []
+            for doc in pdf_docs:
+                content = doc.page_content
+                cleaned_text = clean_chinese_spacing(content)
+                cleaned_docs.append(Document(page_content=cleaned_text, metadata=doc.metadata))
+
+            # 🔹 使用 text_splitter 處理已清洗過的文本
+            split_docs = text_splitter.split_documents(cleaned_docs)
+            
+            # print(f"   ✂️ 切割後文檔數量: {len(split_docs)}")
+            
+            pages.extend(split_docs)
+
+    print(f"✅ PDF 處理完成，總共生成 {len(pages)} 個文檔塊")
+
+    # 建立規則向量資料庫
     rules_store = FirestoreVectorStore.from_documents(
         documents=pages,
         embedding=embedding,
@@ -499,7 +642,7 @@ async def load_vector_database():
         client=client
     )
 
-    print(f"✅ 已載入 PDF 修課規範數量: {len(pages)}")
+    print(f"✅ 已載入 PDF 修課規範，文檔塊數量: {len(pages)}")
 
     # 載入 Firestore Teacher 資料
     teacher_docs = []
@@ -526,7 +669,7 @@ async def load_vector_database():
     )
     print(f"✅ 已載入 Firestore 教師數量: {len(teacher_page)}")
 
-    # 🔹 載入FAQ資料 - 支援MMR檢索的格式
+    # 🔹 載入FAQ資料 - 支援相似度檢索的格式
     faq_docs = []
     faq_page = []
     faq_ref = client.collection("InfoHub")  # 你的FAQ集合名稱
@@ -538,26 +681,19 @@ async def load_vector_database():
         answer = data.get('answer', '')
         
         if question:  # 確保問題不為空
-            # 建立支援MMR的Document格式
-            # page_content包含完整的JSON數據，以便MMR檢索時能正確解析
-            content_json = json.dumps({
-                "metadata": {
-                    "question": question,
-                    "answer": answer
-                }
-            }, ensure_ascii=False)
-            
+            # 建立支援相似度檢索的Document格式
+            # 使用問題作為page_content，便於相似度比對
             faq_docs.append(Document(
-                page_content=content_json,  # JSON格式的完整內容
+                page_content=question,  # 使用問題文本進行相似度比對
                 metadata={
-                    "question": question,  # 同時保留在metadata中
+                    "question": question,
                     "answer": answer
                 }
             ))
 
     faq_page.extend(faq_docs)
 
-    # 建立FAQ向量資料庫 - 支援MMR檢索
+    # 建立FAQ向量資料庫 - 支援相似度檢索
     faq_store = FirestoreVectorStore.from_documents(
         documents=faq_page,
         embedding=embedding,
@@ -565,7 +701,7 @@ async def load_vector_database():
         client=client
     )
     print(f"✅ 已載入 FAQ 數量: {len(faq_page)}")
-    print(f"✅ FAQ 支援MMR檢索格式")
+    print(f"✅ FAQ 支援相似度檢索格式")
 
     # 建立 retriever 工具（不包含FAQ工具，因為會自動調用）
     rules_tool = create_retriever_tool(
@@ -587,52 +723,47 @@ async def load_vector_database():
         "vectordb": {
             "rules": rules_store,
             "teachers": teachers_store,
-            "faq": faq_store  # 支援MMR的版本
+            "faq": faq_store  # 支援相似度檢索的版本
         },
         "tools": tools
     }
+
+def clean_chinese_spacing(text: str) -> str:
+    # 移除中文字之間的空格（只保留英數之間的正常空格）
+    return re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
 
 # **初始化向量資料庫**
 vectordb = None
 async def init_vectordb():
     global vectordb
     global retriever_tools
+    global global_embedding
     loaded = await load_vector_database()
     vectordb = loaded["vectordb"]
     retriever_tools = loaded["tools"]
+    
+    # 初始化全域embedding模型
+    global_embedding = OllamaEmbeddings(model="bge-m3:latest")
 
 # 🔧 查詢工具函式定義
 def teachers(query: str) -> str:
     """查詢教師資訊"""
     print("📥 接收到的 teachers query:", query)
+    
+    # 使用 similarity_search 獲取相似文檔
     docs_sim = vectordb["teachers"].similarity_search(query, k=1)
-    docs_mmr = vectordb["teachers"].max_marginal_relevance_search(query, 1,
-                            filters=FieldFilter("metadata.id", "==", query)
-                                                                )
-    # 移除重複的 Document（依 page_content）
-    unique_docs_mmr = list({doc.page_content: doc for doc in docs_mmr}.values())
-
-    # 組合兩種結果
-    sim_results = "\n\n".join([doc.page_content for doc in docs_sim])
-    mmr_results = "\n\n".join([
-        doc.page_content.encode('utf-8').decode('unicode_escape')
-        for doc in unique_docs_mmr
-    ])
- 
-    combined_results = sim_results + "\n\n" + mmr_results
-
-    return combined_results
+    
+    # 提取文檔內容
+    results = "\n\n".join([doc.page_content for doc in docs_sim])
+    
+    return results
 
 def rules(query: str) -> str:
     """查詢修課與畢業規定"""
     print("📥 接收到的 rules query:", query)
-    docs_mmr = vectordb["rules"].max_marginal_relevance_search(query, 1)
-    unique_docs = list({doc.page_content: doc for doc in docs_mmr}.values())
-    results = "\n\n".join([
-        doc.page_content.encode('utf-8').decode('unicode_escape')
-        for doc in unique_docs
-    ])
+    docs_sim = vectordb["rules"].similarity_search(query, k=1)
 
+    results = "\n\n".join([doc.page_content for doc in docs_sim])
     return results
 
 # 🔹 新增：清理推薦問題中的格式化符號
@@ -661,14 +792,14 @@ def clean_recommended_questions(content: str) -> str:
     
     return cleaned.strip()
 
-# 🧠 AutoGen 多代理對話整合 - 精簡版 + FAQ MMR檢索 + 增強調試
+# 🧠 AutoGen 多代理對話整合 - 精簡版 + FAQ 相似度檢索 + 增強調試
 def start_multi_agent_chat(user_input: str):
     from autogen import UserProxyAgent, ConversableAgent, GroupChat, GroupChatManager
 
     if user_input.strip() in ["你好", "嗨", "哈囉", "您好", "Hello", "hello"]:
         return "您好，我是智慧大學AI助理，有什麼需要我幫忙的嗎？"
 
-    # 🔍 每次對話開始前，先執行FAQ MMR檢索
+    # 🔍 每次對話開始前，先執行FAQ相似度檢索
     faq_search_result = faq_universal_search(user_input, relevance_threshold=FAQ_CONFIG["RELEVANCE_THRESHOLD"])
     
     # 🔥 UserProxyAgent - 自動模式
@@ -705,7 +836,7 @@ def start_multi_agent_chat(user_input: str):
         human_input_mode="NEVER",
     )
 
-    # ✅ 更新 Retriever Agent - 包含FAQ MMR檢索邏輯
+    # ✅ 更新 Retriever Agent - 包含FAQ相似度檢索邏輯
     retriever = ConversableAgent(
         name="RetrieverAgent",
         llm_config={
@@ -714,12 +845,8 @@ def start_multi_agent_chat(user_input: str):
             "base_url": "http://localhost:11434",
             "api_type": "ollama",
         },
+        max_consecutive_auto_reply=2,
         system_message=f"""你是資料檢索代理。請用繁體中文執行檢索任務。
-
-**重要：FAQ資料庫已自動使用MMR檢索完成**
-- FAQ檢索結果相關性分數：{faq_search_result['max_score']:.3f}
-- 是否提供FAQ結果給回答代理：{faq_search_result['should_use']}
-- 檢索到的FAQ結果數量：{len(faq_search_result.get('results', []))}
 
 **執行邏輯：**
 1. 查看 QuestionInspector 的判斷結果
@@ -730,11 +857,13 @@ def start_multi_agent_chat(user_input: str):
 
 【基本資料查詢】
 - teachers：查詢教師聯絡資訊（輸入教師姓名）
-- rules：查詢畢業與修課規定（輸入關鍵字，如「畢業規定」、「英文門檻」、「學分要求」）
+- rules：查詢畢業與修課規定（輸入關鍵字）
+
+- rules：查詢畢業與修課規定（可查詢：畢業學分、英文門檻、程式機測、擋修規定等）
 
 【課程資訊查詢】
 - course_search：依系所、星期、時段查詢課程（輸入如「資管系 禮拜四 下午課」）
-- course_name_search：查詢課程名稱相關資料（輸入課程名稱關鍵字）
+- course_name_search：依課程名稱查詢相關資料（輸入課程名稱關鍵字）
 - teacher_course_search：查詢特定教師開設的課程（輸入教師姓名，如「謝錦偉」、「陳建良」）
 
 【課程評價查詢】
@@ -743,18 +872,19 @@ def start_multi_agent_chat(user_input: str):
 - teacher_review_search：特定教師評價搜尋（輸入教師姓名，如「謝錦偉」）
 
 **快速決策原則：**
-- 問「缺什麼領域課程」+ 圖片顯示缺課 → 直接用 course_search("[缺失領域]通識領域課程")
-- 問「缺什麼領域課程」→ 直接用 course_search("社會科學領域課程推薦")
-- 問「某教師資訊」→ 直接用 teachers("教師姓名")
-- 問「某教師開什麼課」→ 直接用 teacher_course_search("教師姓名")
-- 問「某時段課程」→ 直接用 course_search("時段條件")
-- 問「畢業規定」→ 直接用 rules("畢業規定")
+- 問「畢業學分數」→ 用 rules("畢業學分")
+- 問「英檢」→ 用 rules("英文檢定")
+- 問「機測」→ 用 rules("程式語言機測")
+- 問「擋修規定」→ 用 rules("擋修規定")
+- 問教師相關 → 用 teachers("教師姓名")
+- 問課程相關 → 用對應的course工具
 
 **重要提醒：**
-- FAQ資料庫已自動使用MMR檢索，最多返回2筆最相關結果
 - 相關結果會自動提供給回答代理
-- 你只需要選擇其他必要的檢索工具
-- 執行工具後回應「檢索完成」
+- 你只需要選擇其他必要的檢索工具，不須自行回應
+- 一次回應只使用一個檢索資料
+- **特別注意：根據向量資料庫的分拆結構，使用精確的標題關鍵詞檢索**
+
 """,
         human_input_mode="NEVER",
     )
@@ -767,8 +897,8 @@ def start_multi_agent_chat(user_input: str):
         if len(results) > 0:
             faq_context_parts = []
             for i, result in enumerate(results, 1):
-                if result["score"] >= faq_search_result["threshold"]:
-                    faq_context_parts.append(f"Q{i}: {result['question']}\nA{i}: {result['answer']}")
+                # 已經過閾值篩選，不需要再次檢查
+                faq_context_parts.append(f"Q{i}: {result['question']}\nA{i}: {result['answer']}")
             
             if faq_context_parts:
                 faq_context = f"\n\n【FAQ資料庫相關內容】\n" + "\n\n".join(faq_context_parts)
@@ -777,8 +907,8 @@ def start_multi_agent_chat(user_input: str):
     print("🔍 FAQ上下文調試：")
     print(f"📊 should_use: {faq_search_result['should_use']}")
     print(f"📊 結果數量: {len(faq_search_result.get('results', []))}")
-    print(f"📊 最高分數: {faq_search_result.get('max_score', 0):.3f}")
-    print(f"📊 閾值: {faq_search_result.get('threshold', 0.7):.1f}")
+    print(f"📊 最高分數: {faq_search_result.get('max_score', 0):.6f}")
+    print(f"📊 閾值: {faq_search_result.get('threshold', 0.8):.1f}")
     print(f"📋 faq_context 內容：")
     print(faq_context if faq_context else "（無相關FAQ內容）")
     print("="*80)
@@ -804,6 +934,7 @@ def start_multi_agent_chat(user_input: str):
 6. 課程評價說明：包含學生推薦度、作業量、考試難度、收穫程度等真實評價
 7. 機測說明：資管系重要的程式語言測驗項目，是電腦上機實作考試，通常考驗程式設計能力
 8. 避免機器人式用語，像朋友在回答
+9. 使用者只看得到你的回覆，所以請忽略不相關的資訊
 
 使用者問題：{user_input}
 
@@ -921,7 +1052,7 @@ def start_multi_agent_chat(user_input: str):
 執行順序：User → Inspector → Retriever → Primary → Recommender
 
 管理重點：
-- FAQ資料庫已自動使用MMR檢索完成，最多返回2筆結果
+- FAQ資料庫已自動使用相似度檢索完成，最多返回2筆結果
 - Inspector 準確分類問題
 - Retriever 精確執行額外查詢（包含教師課程搜尋和課程評價工具）
 - Primary 整合FAQ和其他檢索結果，用繁體中文自然回答
@@ -1016,7 +1147,7 @@ def interpret_image(base64_image: str, question: str = "這張圖在說什麼？
     print("🖼️ 使用 GPT-4 Vision 處理圖片中...")
 
     vision_model = ChatOpenAI(
-        model="gpt-4o",
+        model="gpt-4.1-2025-04-14",
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url="https://api.openai.com/v1",
         temperature=0.1,
