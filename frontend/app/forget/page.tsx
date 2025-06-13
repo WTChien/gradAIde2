@@ -33,7 +33,7 @@ export default function Pass() {
                     return;
                 }
 
-                const res = await fetch("https://llm.gradaide.xyz/send_verification_code", {
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/send_verification_code`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ account, email })
@@ -56,7 +56,7 @@ export default function Pass() {
                     return;
                 }
 
-                const res = await fetch("https://llm.gradaide.xyz/verify_code", {
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/verify_code`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ email, code })
@@ -82,7 +82,7 @@ export default function Pass() {
                   return;
                 }
               
-                const res = await fetch("https://llm.gradaide.xyz/reset_password", {
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/reset_password`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ email, code, new_password: newPassword })
