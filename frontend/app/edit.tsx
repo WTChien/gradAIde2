@@ -22,7 +22,7 @@ export default function Top() {
     }
 
     try {
-      const res = await axios.get<{ username: string }>(`https://llm.gradaide.xyz/get_username/${account}`);
+      const res = await axios.get<{ username: string }>(`${process.env.NEXT_PUBLIC_API_BASE_URL}/get_username/${account}`);
       if (res.data.username && isNaN(Number(res.data.username))) {
         setUsername(`${res.data.username}同學`);
         localStorage.setItem("username", res.data.username);

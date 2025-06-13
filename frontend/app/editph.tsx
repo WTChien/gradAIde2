@@ -39,7 +39,7 @@ const MobileUploadStats: React.FC = () => {
     
     try {
       console.log("📊 [手机版] 获取用户上传信息...");
-      const response = await axios.post('https://llm.gradaide.xyz/pre_upload_check', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_BASE_URL}/pre_upload_check`, {
         account: account
       }, {
         timeout: 10000
@@ -318,7 +318,7 @@ export default function Topph() {
     }
 
     try {
-        const res = await axios.get<{ username: string }>(`https://llm.gradaide.xyz/get_username/${account}`);
+        const res = await axios.get<{ username: string }>(`${process.env.NEXT_PUBLIC_API_BASE_URL}/get_username/${account}`);
         if (res.data.username && isNaN(Number(res.data.username))) {
         setUsername(`${res.data.username}同學`);
         localStorage.setItem("username", res.data.username);

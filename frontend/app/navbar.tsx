@@ -476,7 +476,7 @@ const UploadStats: React.FC<{ isCollapsed: boolean }> = ({ isCollapsed }) => {
     
     try {
       console.log("📊 获取用户上传信息...");
-      const response = await axios.post('https://llm.gradaide.xyz/pre_upload_check', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_BASE_URL}/pre_upload_check`, {
         account: account
       }, {
         timeout: 10000
@@ -791,7 +791,7 @@ export default function NavBar() {
     let email = "";
 
     try {
-      const res = await axios.get<{ email: string }>(`https://llm.gradaide.xyz/get_email/${account}`);
+      const res = await axios.get<{ email: string }>(`${process.env.NEXT_PUBLIC_API_BASE_URL}/get_email/${account}`);
       email = res.data.email;
       localStorage.setItem("email", email);
     } catch (err) {
@@ -807,7 +807,7 @@ export default function NavBar() {
 
     try {
       const response = await axios.post<{ message: string }>(
-        "https://llm.gradaide.xyz/report_issue",
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/report_issue`,
         {
           account,
           email,

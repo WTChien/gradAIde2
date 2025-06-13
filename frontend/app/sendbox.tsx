@@ -128,7 +128,7 @@ export default function SendBox({ messages, setMessages }: SendBoxProps) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
-      const response = await fetch('https://llm.gradaide.xyz/health', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/health`, {
         method: 'GET',
         signal: controller.signal
       });
@@ -148,7 +148,7 @@ export default function SendBox({ messages, setMessages }: SendBoxProps) {
     
     try {
       console.log("📊 獲取用戶上傳信息...");
-      const response = await axios.post('https://llm.gradaide.xyz/pre_upload_check', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_BASE_URL}/pre_upload_check`, {
         account: account
       }, {
         timeout: 10000
@@ -245,7 +245,7 @@ export default function SendBox({ messages, setMessages }: SendBoxProps) {
       setUploadProgress(30);
 
       const startTime = Date.now();
-      const response = await axios.post("https://llm.gradaide.xyz/upload_image", formData, {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_BASE_URL}/upload_image`, formData, {
         headers: { 
           "Content-Type": "multipart/form-data",
         },
@@ -618,7 +618,7 @@ export default function SendBox({ messages, setMessages }: SendBoxProps) {
         messagePreview: messageText.substring(0, 50) + '...'
       });
 
-      const response = await fetch('https://llm.gradaide.xyz/query', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/query`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

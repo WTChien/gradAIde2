@@ -383,7 +383,7 @@ export default function ContextArea() {
 
         console.log('嘗試獲取用戶資料 for account:', account);
 
-        const response = await fetch(`https://llm.gradaide.xyz/get_user_profile/${account}`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/get_user_profile/${account}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -446,7 +446,7 @@ export default function ContextArea() {
         
         console.log(`📤 請求數據:`, requestBody);
         
-        const response = await fetch(`https://llm.gradaide.xyz/update_subscription`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/update_subscription`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
