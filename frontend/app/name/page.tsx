@@ -30,7 +30,7 @@ export default function Name() {
 
     try {
       const response = await axios.post<{ message: string }>(
-        "https://llm.gradaide.xyz/change_name",
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/change_name`,
         {
           account,
           new_name: newName
