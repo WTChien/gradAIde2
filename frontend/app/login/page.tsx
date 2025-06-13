@@ -77,8 +77,8 @@ export default function Index() {
 
     const apiUrl =
   selectedOption === "student"
-    ? "https://llm.gradaide.xyz/register_student"
-    : "https://llm.gradaide.xyz/register_non_student";
+    ? `${process.env.NEXT_PUBLIC_API_BASE_URL}/register_student`
+    : `${process.env.NEXT_PUBLIC_API_BASE_URL}/register_non_student`;
 
 
     const data =
@@ -128,7 +128,7 @@ export default function Index() {
         user_type?: string;      // 🆕 用戶類型
         department_name?: string; // 🆕 系所名稱
         study_type?: string;     // 🆕 學制類型
-      }>("https://llm.gradaide.xyz/login", {
+      }>(`${process.env.NEXT_PUBLIC_API_BASE_URL}/login`, {
         account,
         password,
       });
