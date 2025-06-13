@@ -48,7 +48,7 @@ export default function Pass() {
 
     try {
       const response = await axios.post<{ message: string }>(
-        "https://llm.gradaide.xyz/change_password",
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/change_password`,
         {
           account,
           old_password: password,
