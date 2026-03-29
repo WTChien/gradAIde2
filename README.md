@@ -60,11 +60,11 @@ gradAIde2/
 	└── public/
 ```
 
-## macOS 開發環境需求
+## Windows 開發環境需求
 
 建議使用以下版本：
 
-- macOS
+- Windows 10/11
 - Python 3.10 以上
 - Node.js 18 以上
 - npm 9 以上
@@ -72,21 +72,33 @@ gradAIde2/
 可先確認版本：
 
 ```bash
-python3 --version
+python --version
 node --version
 npm --version
+```
+
+若 `python` 指令不存在，可改用：
+
+```bash
+py --version
 ```
 
 ## 後端安裝與啟動
 
 ### 1. 建立虛擬環境
 
-```bash
+```powershell
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -r ../requirements.txt
+```
+
+如果第一次啟用虛擬環境時遇到 PowerShell 權限問題，可先執行一次：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 ### 2. 準備 Firebase 憑證
@@ -121,9 +133,9 @@ USER_AGENT=Mozilla/5.0 (GradAIdeBot)
 
 ### 4. 啟動後端
 
-```bash
+```powershell
 cd backend
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 python main.py
 ```
 
@@ -182,7 +194,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 若你已補齊 `package.json`，一般啟動方式會是：
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
@@ -218,11 +230,11 @@ http://127.0.0.1:3000
 
 `backend/command_line.py` 會使用瀏覽器代理到輔大課程系統查詢資料。
 
-執行範例：
+Windows 執行範例：
 
-```bash
+```powershell
 cd backend
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 python command_line.py --query "星期一早上的通識課"
 ```
 
@@ -247,7 +259,7 @@ http://localhost:11435
 - `firebase_config.py` 讀取 `backend/firebase-adminsdk.json`
 - `llm.py` 內仍有寫死的 Linux 絕對路徑
 
-如果你要在 macOS 本機穩定執行，建議後續統一改成 `.env` 或單一相對路徑設定。
+如果你要在 Windows 本機穩定執行，建議後續統一改成 `.env` 或單一相對路徑設定。
 
 ### 2. 前端依賴清單目前不在 workspace 中
 
@@ -264,10 +276,10 @@ http://localhost:11435
 
 ## 建議啟動順序
 
-```bash
+```powershell
 # Terminal 1
 cd backend
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 python main.py
 
 # Terminal 2
